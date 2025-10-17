@@ -1,0 +1,74 @@
+# SOME DESCRIPTIVE TITLE.
+# Copyright (C) YEAR THE PACKAGE'S COPYRIGHT HOLDER
+# This file is distributed under the same license as the PACKAGE package.
+# FIRST AUTHOR <EMAIL@ADDRESS>, YEAR.
+#
+#, fuzzy
+msgid ""
+msgstr ""
+"Project-Id-Version: Blasti 3D Configurator 1.0.0\n"
+"Report-Msgid-Bugs-To: \n"
+"POT-Creation-Date: 2024-01-01 12:00+0000\n"
+"PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
+"Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
+"Language-Team: LANGUAGE <LL@li.org>\n"
+"Language: \n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+
+#: blasti-configurator.php
+msgid "Blasti 3D Configurator requires WooCommerce to be installed and active. Please %s."
+msgstr ""
+
+#: blasti-configurator.php
+msgid "install WooCommerce"
+msgstr ""
+
+#: blasti-configurator.php
+msgid "Blasti 3D Configurator requires WordPress 5.0 or higher."
+msgstr ""
+
+#: blasti-configurator.php
+msgid "Blasti 3D Configurator requires PHP 7.4 or higher."
+msgstr ""
+
+#: templates/configurator.php
+msgid "Loading 3D Configurator..."
+msgstr ""
+
+#: templates/configurator.php
+msgid "Select Pegboard"
+msgstr ""
+
+#: templates/configurator.php
+msgid "Add Accessories"
+msgstr ""
+
+#: templates/configurator.php
+msgid "Your Configuration"
+msgstr ""
+
+#: templates/configurator.php
+msgid "No pegboard selected"
+msgstr ""
+
+#: templates/configurator.php
+msgid "Total:"
+msgstr ""
+
+#: templates/configurator.php
+msgid "Add to Cart"
+msgstr ""
+
+#: templates/configurator.php
+msgid "Save Configuration"
+msgstr ""
+
+#: templates/configurator.php
+msgid "Reset"
+msgstr ""
+
+#: templates/configurator.php
+msgid "View Angles"
+msgstr ""

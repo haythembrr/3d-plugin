@@ -1,0 +1,202 @@
+/**
+ * Blasti 3D Configurator Admin Styles
+ * Styles for the WordPress admin interface
+ */
+
+/* Admin Page Layout */
+.blasti-admin-container {
+    max-width: 1200px;
+    margin: 20px 0;
+}
+
+.blasti-admin-header {
+    background: #fff;
+    padding: 20px;
+    border-radius: 8px;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+    margin-bottom: 20px;
+}
+
+.blasti-admin-content {
+    display: grid;
+    grid-template-columns: 2fr 1fr;
+    gap: 20px;
+}
+
+/* Settings Forms */
+.blasti-settings-section {
+    background: #fff;
+    padding: 20px;
+    border-radius: 8px;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+    margin-bottom: 20px;
+}
+
+.blasti-settings-section h3 {
+    margin-top: 0;
+    padding-bottom: 10px;
+    border-bottom: 1px solid #eee;
+}
+
+.form-table th {
+    width: 200px;
+    font-weight: 600;
+}
+
+.form-table td {
+    padding: 15px 10px;
+}
+
+/* Product Management */
+.product-management-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+    gap: 20px;
+}
+
+.product-card {
+    background: #fff;
+    border-radius: 8px;
+    padding: 20px;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+}
+
+.product-card h4 {
+    margin-top: 0;
+    color: #23282d;
+}
+
+.product-meta {
+    display: grid;
+    gap: 10px;
+    margin-bottom: 15px;
+}
+
+.product-meta-item {
+    display: flex;
+    justify-content: space-between;
+    padding: 5px 0;
+    border-bottom: 1px solid #f0f0f0;
+}
+
+/* Model Upload */
+.model-upload-area {
+    border: 2px dashed #ccc;
+    border-radius: 8px;
+    padding: 40px;
+    text-align: center;
+    background: #fafafa;
+    transition: all 0.3s ease;
+}
+
+.model-upload-area:hover {
+    border-color: #007cba;
+    background: #f0f8ff;
+}
+
+.model-upload-area.dragover {
+    border-color: #007cba;
+    background: #e7f3ff;
+}
+
+/* Statistics Dashboard */
+.stats-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 20px;
+    margin-bottom: 30px;
+}
+
+.stat-card {
+    background: #fff;
+    padding: 20px;
+    border-radius: 8px;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+    text-align: center;
+}
+
+.stat-number {
+    font-size: 32px;
+    font-weight: 700;
+    color: #007cba;
+    margin-bottom: 5px;
+}
+
+.stat-label {
+    color: #666;
+    font-size: 14px;
+}
+
+/* Buttons */
+.btn-admin {
+    background: #007cba;
+    color: white;
+    border: none;
+    padding: 10px 20px;
+    border-radius: 4px;
+    cursor: pointer;
+    text-decoration: none;
+    display: inline-block;
+    transition: background-color 0.2s ease;
+}
+
+.btn-admin:hover {
+    background: #005a87;
+    color: white;
+}
+
+.btn-admin.btn-secondary {
+    background: #6c757d;
+}
+
+.btn-admin.btn-secondary:hover {
+    background: #545b62;
+}
+
+.btn-admin.btn-danger {
+    background: #dc3545;
+}
+
+.btn-admin.btn-danger:hover {
+    background: #c82333;
+}
+
+/* Notices */
+.blasti-notice {
+    padding: 15px;
+    border-radius: 4px;
+    margin-bottom: 20px;
+}
+
+.blasti-notice.notice-success {
+    background: #d4edda;
+    border-left: 4px solid #28a745;
+    color: #155724;
+}
+
+.blasti-notice.notice-error {
+    background: #f8d7da;
+    border-left: 4px solid #dc3545;
+    color: #721c24;
+}
+
+.blasti-notice.notice-warning {
+    background: #fff3cd;
+    border-left: 4px solid #ffc107;
+    color: #856404;
+}
+
+/* Responsive Admin */
+@media (max-width: 768px) {
+    .blasti-admin-content {
+        grid-template-columns: 1fr;
+    }
+    
+    .stats-grid {
+        grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+    }
+    
+    .product-management-grid {
+        grid-template-columns: 1fr;
+    }
+}

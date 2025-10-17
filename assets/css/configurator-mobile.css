@@ -1,0 +1,94 @@
+/**
+ * Blasti 3D Configurator Mobile Styles
+ * Mobile-specific optimizations for the configurator
+ */
+
+/* Mobile Layout Adjustments */
+.blasti-configurator-container {
+    padding: 10px;
+}
+
+.configurator-layout {
+    grid-template-columns: 1fr;
+    gap: 10px;
+}
+
+.configurator-scene {
+    min-height: 300px;
+    touch-action: none; /* Prevent default touch behaviors */
+}
+
+/* Mobile Sidebar */
+.configurator-sidebar {
+    padding: 15px;
+    order: -1; /* Move sidebar above scene on mobile */
+}
+
+.configurator-section {
+    margin-bottom: 20px;
+}
+
+/* Touch-Friendly Controls */
+.product-item {
+    padding: 15px;
+    min-height: 60px;
+}
+
+.btn {
+    padding: 15px 20px;
+    font-size: 18px;
+    min-height: 50px;
+}
+
+.camera-angle-btn {
+    padding: 12px 16px;
+    font-size: 14px;
+    min-width: 60px;
+}
+
+/* Mobile Price Display */
+.price-display {
+    position: sticky;
+    top: 0;
+    z-index: 10;
+    background: #fff;
+    border: 1px solid #ddd;
+    margin-bottom: 15px;
+}
+
+/* Mobile Product Lists */
+.product-list {
+    max-height: 200px;
+    overflow-y: auto;
+}
+
+/* Touch Gestures Info */
+.touch-info {
+    background: #e7f3ff;
+    padding: 10px;
+    border-radius: 4px;
+    font-size: 14px;
+    margin-bottom: 15px;
+    text-align: center;
+}
+
+/* Mobile Error Messages */
+.configurator-error {
+    position: fixed;
+    top: 10px;
+    left: 10px;
+    right: 10px;
+    transform: none;
+}
+
+/* Landscape Mode Adjustments */
+@media (orientation: landscape) and (max-height: 500px) {
+    .configurator-scene {
+        min-height: 250px;
+    }
+    
+    .configurator-sidebar {
+        max-height: 250px;
+        overflow-y: auto;
+    }
+}

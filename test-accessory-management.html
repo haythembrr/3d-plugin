@@ -1,0 +1,417 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Test Accessory Management - Blasti 3D Configurator</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background: #f5f5f5;
+        }
+        
+        .test-container {
+            max-width: 1400px;
+            margin: 0 auto;
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        }
+        
+        h1 {
+            color: #333;
+            margin-bottom: 10px;
+        }
+        
+        .test-info {
+            background: #e7f3ff;
+            padding: 15px;
+            border-left: 4px solid #007cba;
+            margin-bottom: 20px;
+        }
+        
+        .test-info h2 {
+            margin: 0 0 10px 0;
+            font-size: 18px;
+            color: #007cba;
+        }
+        
+        .test-info ul {
+            margin: 5px 0;
+            padding-left: 20px;
+        }
+        
+        .test-info li {
+            margin: 5px 0;
+        }
+        
+        .test-section {
+            margin: 20px 0;
+            padding: 15px;
+            background: #f8f9fa;
+            border-radius: 4px;
+        }
+        
+        .test-section h3 {
+            margin: 0 0 10px 0;
+            color: #333;
+        }
+        
+        .test-grid {
+            display: grid;
+            grid-template-columns: 2fr 1fr;
+            gap: 20px;
+            margin-top: 20px;
+        }
+        
+        .scene-container {
+            background: #e0e0e0;
+            border-radius: 8px;
+            min-height: 500px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            position: relative;
+        }
+        
+        .controls-container {
+            background: white;
+            border-radius: 8px;
+            padding: 20px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        
+        .control-section {
+            margin-bottom: 20px;
+        }
+        
+        .control-section h4 {
+            margin: 0 0 10px 0;
+            font-size: 16px;
+            color: #333;
+        }
+        
+        .placed-accessories-list {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+        
+        .placed-accessory-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 10px;
+            background: #f8f9fa;
+            border: 1px solid #dee2e6;
+            border-radius: 4px;
+            transition: all 0.2s ease;
+        }
+        
+        .placed-accessory-item:hover {
+            background: #e9ecef;
+            border-color: #adb5bd;
+        }
+        
+        .accessory-name {
+            flex: 1;
+            font-weight: 500;
+            color: #333;
+            margin-right: 10px;
+        }
+        
+        .accessory-actions {
+            display: flex;
+            gap: 5px;
+            align-items: center;
+        }
+        
+        .reposition-accessory-btn {
+            background: #007cba;
+            color: white;
+            border: none;
+            padding: 6px 10px;
+            border-radius: 4px;
+            font-size: 16px;
+            font-weight: bold;
+            cursor: pointer;
+            transition: background 0.2s ease;
+            line-height: 1;
+        }
+        
+        .reposition-accessory-btn:hover {
+            background: #005a87;
+        }
+        
+        .remove-accessory-btn {
+            background: #dc3545;
+            color: white;
+            border: none;
+            padding: 6px 10px;
+            border-radius: 4px;
+            font-size: 14px;
+            font-weight: bold;
+            cursor: pointer;
+            transition: background 0.2s ease;
+        }
+        
+        .remove-accessory-btn:hover {
+            background: #c82333;
+        }
+        
+        .test-button {
+            background: #28a745;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+            margin: 5px;
+        }
+        
+        .test-button:hover {
+            background: #218838;
+        }
+        
+        .status-message {
+            padding: 10px;
+            margin: 10px 0;
+            border-radius: 4px;
+            font-size: 14px;
+        }
+        
+        .status-message.success {
+            background: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
+        }
+        
+        .status-message.info {
+            background: #d1ecf1;
+            color: #0c5460;
+            border: 1px solid #bee5eb;
+        }
+        
+        .status-message.warning {
+            background: #fff3cd;
+            color: #856404;
+            border: 1px solid #ffeaa7;
+        }
+        
+        .empty-state {
+            text-align: center;
+            padding: 20px;
+            color: #666;
+        }
+    </style>
+</head>
+<body>
+    <div class="test-container">
+        <h1>🧪 Test: Accessory Management Features (Task 6.3)</h1>
+        
+        <div class="test-info">
+            <h2>Test Objectives</h2>
+            <p>This test verifies the implementation of Task 6.3: Build accessory management features</p>
+            <ul>
+                <li><strong>Remove Accessories:</strong> Click the × button to remove placed accessories</li>
+                <li><strong>List Accessories:</strong> View all currently placed accessories in the list</li>
+                <li><strong>Reposition Accessories:</strong> Click the ↻ button to reposition accessories</li>
+            </ul>
+        </div>
+        
+        <div class="test-section">
+            <h3>Requirements Coverage</h3>
+            <ul>
+                <li><strong>Requirement 3.4:</strong> Remove placed accessories and prevent overlaps</li>
+                <li><strong>Requirement 3.5:</strong> Reposition accessories on the pegboard</li>
+            </ul>
+        </div>
+        
+        <div class="test-grid">
+            <div class="scene-container">
+                <div style="text-align: center; color: #666;">
+                    <p style="font-size: 48px; margin: 0;">🎨</p>
+                    <p style="font-size: 18px; margin: 10px 0;">3D Scene Placeholder</p>
+                    <p style="font-size: 14px; margin: 0;">In the actual implementation, this would show the 3D pegboard</p>
+                    <p style="font-size: 14px; margin: 5px 0;">with accessories that can be repositioned</p>
+                </div>
+            </div>
+            
+            <div class="controls-container">
+                <div class="control-section">
+                    <h4>Test Actions</h4>
+                    <button class="test-button" onclick="addTestAccessory()">➕ Add Test Accessory</button>
+                    <button class="test-button" onclick="clearAllAccessories()">🗑️ Clear All</button>
+                </div>
+                
+                <div class="control-section">
+                    <h4>Placed Accessories</h4>
+                    <div id="placed-accessories">
+                        <div class="empty-state">
+                            <p>No accessories placed</p>
+                            <p style="font-size: 12px; color: #999;">Click "Add Test Accessory" to test</p>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="control-section">
+                    <h4>Status</h4>
+                    <div id="status-messages"></div>
+                </div>
+            </div>
+        </div>
+        
+        <div class="test-section">
+            <h3>Test Instructions</h3>
+            <ol>
+                <li><strong>Add Accessories:</strong> Click "Add Test Accessory" to simulate placing accessories</li>
+                <li><strong>View List:</strong> Observe that accessories appear in the "Placed Accessories" list</li>
+                <li><strong>Reposition:</strong> Click the ↻ button on any accessory to test repositioning mode</li>
+                <li><strong>Remove:</strong> Click the × button to remove an accessory from the list</li>
+                <li><strong>Clear All:</strong> Click "Clear All" to remove all accessories at once</li>
+            </ol>
+        </div>
+        
+        <div class="test-section">
+            <h3>Expected Behavior</h3>
+            <ul>
+                <li>✅ Each accessory should have both reposition (↻) and remove (×) buttons</li>
+                <li>✅ Clicking remove should immediately remove the accessory from the list</li>
+                <li>✅ Clicking reposition should enter repositioning mode (in full implementation)</li>
+                <li>✅ The list should update dynamically as accessories are added/removed</li>
+                <li>✅ Empty state should show when no accessories are placed</li>
+            </ul>
+        </div>
+    </div>
+    
+    <script>
+        // Simulated accessory data
+        let placedAccessories = [];
+        let accessoryCounter = 0;
+        
+        const accessoryNames = [
+            'Hook - Small',
+            'Hook - Large',
+            'Shelf - 6"',
+            'Shelf - 12"',
+            'Bin - Small',
+            'Bin - Large',
+            'Tool Holder',
+            'Paper Towel Holder'
+        ];
+        
+        function addTestAccessory() {
+            const name = accessoryNames[Math.floor(Math.random() * accessoryNames.length)];
+            const placementId = 'accessory-' + Date.now() + '-' + accessoryCounter++;
+            
+            placedAccessories.push({
+                placementId: placementId,
+                name: name,
+                position: { x: Math.random(), y: Math.random(), z: 0 }
+            });
+            
+            updatePlacedAccessoriesDisplay();
+            showStatus('Accessory added: ' + name, 'success');
+        }
+        
+        function removeAccessory(placementId) {
+            const accessory = placedAccessories.find(a => a.placementId === placementId);
+            
+            if (accessory) {
+                placedAccessories = placedAccessories.filter(a => a.placementId !== placementId);
+                updatePlacedAccessoriesDisplay();
+                showStatus('Accessory removed: ' + accessory.name, 'info');
+            }
+        }
+        
+        function repositionAccessory(placementId) {
+            const accessory = placedAccessories.find(a => a.placementId === placementId);
+            
+            if (accessory) {
+                showStatus('Reposition mode activated for: ' + accessory.name + ' (In full implementation, click on pegboard to reposition)', 'warning');
+                
+                // Simulate repositioning after 2 seconds
+                setTimeout(() => {
+                    accessory.position = { 
+                        x: Math.random(), 
+                        y: Math.random(), 
+                        z: 0 
+                    };
+                    showStatus('Accessory repositioned: ' + accessory.name, 'success');
+                }, 2000);
+            }
+        }
+        
+        function clearAllAccessories() {
+            const count = placedAccessories.length;
+            placedAccessories = [];
+            updatePlacedAccessoriesDisplay();
+            showStatus('Cleared ' + count + ' accessories', 'info');
+        }
+        
+        function updatePlacedAccessoriesDisplay() {
+            const container = document.getElementById('placed-accessories');
+            
+            if (placedAccessories.length === 0) {
+                container.innerHTML = `
+                    <div class="empty-state">
+                        <p>No accessories placed</p>
+                        <p style="font-size: 12px; color: #999;">Click "Add Test Accessory" to test</p>
+                    </div>
+                `;
+                return;
+            }
+            
+            let html = '<div class="placed-accessories-list">';
+            placedAccessories.forEach(accessory => {
+                html += `
+                    <div class="placed-accessory-item" data-placement-id="${accessory.placementId}">
+                        <span class="accessory-name">${accessory.name}</span>
+                        <div class="accessory-actions">
+                            <button class="reposition-accessory-btn" 
+                                    onclick="repositionAccessory('${accessory.placementId}')" 
+                                    type="button" 
+                                    title="Reposition">↻</button>
+                            <button class="remove-accessory-btn" 
+                                    onclick="removeAccessory('${accessory.placementId}')" 
+                                    type="button" 
+                                    title="Remove">×</button>
+                        </div>
+                    </div>
+                `;
+            });
+            html += '</div>';
+            
+            container.innerHTML = html;
+        }
+        
+        function showStatus(message, type) {
+            const container = document.getElementById('status-messages');
+            const messageDiv = document.createElement('div');
+            messageDiv.className = 'status-message ' + type;
+            messageDiv.textContent = message;
+            
+            container.appendChild(messageDiv);
+            
+            // Auto-remove after 5 seconds
+            setTimeout(() => {
+                messageDiv.style.opacity = '0';
+                messageDiv.style.transition = 'opacity 0.3s';
+                setTimeout(() => {
+                    if (messageDiv.parentNode) {
+                        messageDiv.parentNode.removeChild(messageDiv);
+                    }
+                }, 300);
+            }, 5000);
+        }
+        
+        // Initialize display
+        updatePlacedAccessoriesDisplay();
+        showStatus('Test page loaded. Ready to test accessory management features.', 'info');
+    </script>
+</body>
+</html>

@@ -158,7 +158,17 @@
 
 
 
+
+
+
+
+
   - [x] 6.1 Create accessory selection interface
+
+
+
+
+
 
 
 
@@ -175,6 +185,11 @@
 
 
 
+
+
+
+
+
     - Create click-to-place functionality on pegboard
     - Add grid snapping for precise placement
     - Implement collision detection to prevent overlaps
@@ -186,9 +201,15 @@
 
 
 
+
+
+
+
+
     - Add ability to remove placed accessories
     - Create list of currently placed accessories
     - Implement accessory repositioning functionality
+    - Make a markdown file explaining the format the files should be made in and their properties so they are well read by the system and in the right format
     - _Requirements: 3.4, 3.5_
 
 - [x] 7. Implement dynamic pricing and cart features
@@ -210,7 +231,9 @@
     - Add configuration reset functionality
     - _Requirements: 4.1, 4.2, 4.4_
 
-- [-] 7.4 Fix Accessory Placement, Orientation & Interaction Issues
+- [x] 7.4 Fix Accessory Placement, Orientation & Interaction Issues
+
+
 
 
 
@@ -289,6 +312,9 @@
 
 - [ ] 8. Add mobile support and responsive design
   - [ ] 8.1 Implement touch controls for mobile
+
+
+
     - Add touch gesture support for 3D scene interaction
     - Implement mobile-friendly camera controls
     - Create responsive UI layout for mobile devices

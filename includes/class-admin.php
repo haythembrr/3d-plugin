@@ -557,63 +557,8 @@ class Blasti_Configurator_Admin {
         wp_send_json_success('Settings saved successfully');
     }
     
-    /**
-     * AJAX handler for uploading 3D models
-     * Requirement 9.2: Accept GLB files and associate them with products
-     */
-    public function ajax_upload_model() {
-        // Verify nonce and capabilities
-        if (!wp_verify_nonce($_POST['nonce'], 'blasti_admin_nonce') || !current_user_can('manage_options')) {
-            wp_die('Security check failed');
-        }
-        
-        // Check if file was uploaded
-        if (!isset($_FILES['model_file']) || $_FILES['model_file']['error'] !== UPLOAD_ERR_OK) {
-            wp_send_json_error('No file uploaded or upload error occurred');
-        }
-        
-        $file = $_FILES['model_file'];
-        
-        // Validate file type
-        $allowed_types = array('glb', 'gltf');
-        $file_extension = strtolower(pathinfo($file['name'], PATHINFO_EXTENSION));
-        
-        if (!in_array($file_extension, $allowed_types)) {
-            wp_send_json_error('Invalid file type. Only GLB and GLTF files are allowed.');
-        }
-        
-        // Validate file size (max 10MB)
-        if ($file['size'] > 10 * 1024 * 1024) {
-            wp_send_json_error('File size exceeds 10MB limit');
-        }
-        
-        // Create models directory if it doesn't exist
-        $models_dir = BLASTI_CONFIGURATOR_PLUGIN_DIR . 'assets/models/';
-        if (!file_exists($models_dir)) {
-            wp_mkdir_p($models_dir);
-        }
-        
-        // Generate unique filename
-        $filename = uniqid() . '_' . sanitize_file_name($file['name']);
-        $file_path = $models_dir . $filename;
-        
-        // Move uploaded file
-        if (move_uploaded_file($file['tmp_name'], $file_path)) {
-            // Log activity
-            $this->log_activity(
-                sprintf(__('3D model uploaded: %s', 'blasti-configurator'), $filename),
-                'dashicons-upload'
-            );
-            
-            wp_send_json_success(array(
-                'filename' => $filename,
-                'url' => BLASTI_CONFIGURATOR_PLUGIN_URL . 'assets/models/' . $filename,
-                'message' => 'Model uploaded successfully'
-            ));
-        } else {
-            wp_send_json_error('Failed to save uploaded file');
-        }
-    }
+    // Model upload functionality removed - not currently used
+    // Models are managed through WordPress media library instead
     
     /**
      * AJAX handler for getting statistics

@@ -47,15 +47,8 @@ class Blasti_Configurator_Main {
         add_action('wp_head', array($this, 'add_theme_integration_styles'));
         add_action('body_class', array($this, 'add_body_classes'));
         
-        // AJAX hooks for frontend functionality
-        add_action('wp_ajax_blasti_get_products', array($this, 'ajax_get_products'));
-        add_action('wp_ajax_nopriv_blasti_get_products', array($this, 'ajax_get_products'));
-        add_action('wp_ajax_blasti_add_to_cart', array($this, 'ajax_add_to_cart'));
-        add_action('wp_ajax_nopriv_blasti_add_to_cart', array($this, 'ajax_add_to_cart'));
-        add_action('wp_ajax_blasti_validate_cart_config', array($this, 'ajax_validate_cart_config'));
-        add_action('wp_ajax_nopriv_blasti_validate_cart_config', array($this, 'ajax_validate_cart_config'));
-        add_action('wp_ajax_blasti_get_cart_status', array($this, 'ajax_get_cart_status'));
-        add_action('wp_ajax_nopriv_blasti_get_cart_status', array($this, 'ajax_get_cart_status'));
+        // Note: AJAX handlers are now managed by WooCommerce integration class
+        // This prevents duplicate handler registration
     }
     
     /**
@@ -136,11 +129,51 @@ class Blasti_Configurator_Main {
             true
         );
         
-        // Enqueue configurator script
+        // Enqueue modular configurator scripts
+        wp_enqueue_script(
+            'blasti-core',
+            BLASTI_CONFIGURATOR_PLUGIN_URL . 'assets/js/modules/core.js',
+            array('threejs', 'threejs-orbit-controls'),
+            BLASTI_CONFIGURATOR_VERSION,
+            true
+        );
+        
+        wp_enqueue_script(
+            'blasti-models',
+            BLASTI_CONFIGURATOR_PLUGIN_URL . 'assets/js/modules/models.js',
+            array('blasti-core', 'threejs-gltf-loader'),
+            BLASTI_CONFIGURATOR_VERSION,
+            true
+        );
+        
+        wp_enqueue_script(
+            'blasti-ui',
+            BLASTI_CONFIGURATOR_PLUGIN_URL . 'assets/js/modules/ui.js',
+            array('jquery', 'blasti-models'),
+            BLASTI_CONFIGURATOR_VERSION,
+            true
+        );
+        
+        wp_enqueue_script(
+            'blasti-cart',
+            BLASTI_CONFIGURATOR_PLUGIN_URL . 'assets/js/modules/cart.js',
+            array('jquery', 'blasti-ui'),
+            BLASTI_CONFIGURATOR_VERSION,
+            true
+        );
+        
+        wp_enqueue_script(
+            'blasti-memory-manager',
+            BLASTI_CONFIGURATOR_PLUGIN_URL . 'assets/js/modules/memory-manager.js',
+            array('blasti-core'),
+            BLASTI_CONFIGURATOR_VERSION,
+            true
+        );
+        
         wp_enqueue_script(
             'blasti-configurator',
             BLASTI_CONFIGURATOR_PLUGIN_URL . 'assets/js/configurator.js',
-            array('jquery', 'threejs', 'threejs-orbit-controls', 'threejs-gltf-loader'),
+            array('blasti-core', 'blasti-models', 'blasti-ui', 'blasti-cart', 'blasti-memory-manager'),
             BLASTI_CONFIGURATOR_VERSION,
             true
         );
@@ -334,59 +367,6 @@ class Blasti_Configurator_Main {
         return $classes;
     }
     
-    /**
-     * AJAX handler to get products - delegates to WooCommerce integration
-     */
-    public function ajax_get_products() {
-        // Check if WooCommerce is active
-        if (!class_exists('WooCommerce')) {
-            wp_send_json_error(__('WooCommerce is required for this functionality', 'blasti-configurator'));
-        }
-        
-        // Delegate to WooCommerce integration
-        $woocommerce_integration = Blasti_Configurator_WooCommerce::get_instance();
-        $woocommerce_integration->ajax_get_products();
-    }
-    
-    /**
-     * AJAX handler to add items to cart - delegates to WooCommerce integration
-     */
-    public function ajax_add_to_cart() {
-        // Check if WooCommerce is active
-        if (!class_exists('WooCommerce')) {
-            wp_send_json_error(__('WooCommerce is required for this functionality', 'blasti-configurator'));
-        }
-        
-        // Delegate to WooCommerce integration
-        $woocommerce_integration = Blasti_Configurator_WooCommerce::get_instance();
-        $woocommerce_integration->ajax_add_to_cart();
-    }
-    
-    /**
-     * AJAX handler to validate cart configuration - delegates to WooCommerce integration
-     */
-    public function ajax_validate_cart_config() {
-        // Check if WooCommerce is active
-        if (!class_exists('WooCommerce')) {
-            wp_send_json_error(__('WooCommerce is required for this functionality', 'blasti-configurator'));
-        }
-        
-        // Delegate to WooCommerce integration
-        $woocommerce_integration = Blasti_Configurator_WooCommerce::get_instance();
-        $woocommerce_integration->ajax_validate_cart_config();
-    }
-    
-    /**
-     * AJAX handler to get cart status - delegates to WooCommerce integration
-     */
-    public function ajax_get_cart_status() {
-        // Check if WooCommerce is active
-        if (!class_exists('WooCommerce')) {
-            wp_send_json_error(__('WooCommerce is required for this functionality', 'blasti-configurator'));
-        }
-        
-        // Delegate to WooCommerce integration
-        $woocommerce_integration = Blasti_Configurator_WooCommerce::get_instance();
-        $woocommerce_integration->ajax_get_cart_status();
-    }
+    // AJAX handlers removed - now handled directly by WooCommerce integration class
+    // This eliminates duplicate code and improves maintainability
 }

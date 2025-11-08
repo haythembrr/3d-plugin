@@ -1,48 +1,38 @@
 /**
- * Blasti 3D Configurator JavaScript
- * Main frontend functionality for the configurator
+ * Blasti 3D Configurator JavaScript - Main Orchestrator
+ * Coordinates all configurator modules and provides unified API
  */
 
 (function ($) {
     'use strict';
 
-    // Main configurator object
+    // Main configurator orchestrator
     window.BlastiConfigurator = {
-
         // Configuration
         config: {
-            container: null,
-            scene: null,
-            camera: null,
-            renderer: null,
-            controls: null,
-            currentPegboard: null,
-            currentPegboardModel: null, // Reference to loaded pegboard 3D model
-            placedAccessories: [],
-            totalPrice: 0,
-            showDebugHelpers: true, // Enable debug helpers to visualize models
-            priceBreakdown: {
-                pegboard: null,
-                accessories: [],
-                subtotal: 0,
-                total: 0,
-                currency_symbol: '$',
-                formatted_total: '$0.00'
+            initialized: false,
+            modules: {
+                core: null,
+                models: null,
+                ui: null,
+                cart: null,
+                memoryManager: null
             },
-            productPrices: {}, // Cache for product prices
-            modelCache: {}, // Cache for loaded 3D models (Requirements: 2.3, 9.2)
-            loadingModels: {}, // Track models currently being loaded
-            modelLoader: null, // GLTFLoader instance
-            initialized: false // Prevent double initialization
+            currentPegboard: null,
+            currentPegboardModel: null,
+            placedAccessories: [],
+            gridSystem: null,
+            placementMode: null
         },
 
         // Initialize the configurator
         init: function () {
-            console.log('Initializing Blasti 3D Configurator...');
-            const self = this;
+            console.log('🚀 Initializing Blasti 3D Configurator...');
 
             // Check if we're on the configurator page
-            if (!$('.blasti-configurator-container').length) {
+            const jQuery = window.jQuery || window.$;
+            if (!jQuery || !jQuery('.blasti-configurator-container').length) {
+                console.log('ℹ️ Not on configurator page or jQuery not available, skipping initialization');
                 return;
             }
 
@@ -52,1615 +42,1082 @@
                 return;
             }
 
-            // Initialize components immediately - container should be visible now
-            self.initializeScene();
-            self.initializeModelLoader(); // Requirements: 2.3, 9.2
-            self.initializeCameraControls();
-            self.initializePriceDisplay();
-            self.bindEvents();
-            self.loadProducts();
-
-            // Mark as initialized
-            this.config.initialized = true;
-
-            console.log('Configurator initialized successfully');
-        },
-
-        // Initialize 3D scene
-        // Requirements: 2.1, 2.2, 2.4
-        initializeScene: function () {
-            const container = document.getElementById('configurator-scene');
-            if (!container) {
-                console.error('Configurator scene container not found');
-                return;
-            }
-
-            this.config.container = container;
-
-            // Log container state
-            console.log('Container found:', {
-                id: container.id,
-                clientWidth: container.clientWidth,
-                clientHeight: container.clientHeight,
-                offsetWidth: container.offsetWidth,
-                offsetHeight: container.offsetHeight,
-                display: window.getComputedStyle(container).display,
-                visibility: window.getComputedStyle(container).visibility
-            });
-
-            // Check if Three.js is loaded
-            if (typeof THREE === 'undefined') {
-                console.error('Three.js library not loaded');
-                container.innerHTML = '<div class="configurator-error"><p>Failed to load 3D engine. Please refresh the page.</p></div>';
+            // Check module dependencies
+            if (!this.checkDependencies()) {
+                console.error('❌ Missing required dependencies');
                 return;
             }
 
             try {
-                // Create scene
-                this.config.scene = new THREE.Scene();
-                this.config.scene.background = new THREE.Color(0xcccccc); // Light gray background
+                // Initialize modules in order
+                this.initializeModules();
 
-                // Create camera with optimized settings
-                const width = container.clientWidth;
-                const height = container.clientHeight;
-                this.config.camera = new THREE.PerspectiveCamera(
-                    50,                          // Field of view (reduced for less distortion)
-                    width / height,              // Aspect ratio
-                    0.01,                        // Near clipping plane (closer for small objects)
-                    1000                         // Far clipping plane
-                );
-                // Position camera to view objects that may be 0.05m to 2.5m in size
-                // Default view at 4.5m distance to see full pegboard
-                this.config.camera.position.set(2, 1.5, 4.5);
-                this.config.camera.lookAt(0, 1.1, 0);
-                this.config.camera.updateProjectionMatrix();
+                // Bind inter-module events
+                this.bindModuleEvents();
 
-                console.log('📷 Camera created:', {
-                    fov: this.config.camera.fov,
-                    aspect: this.config.camera.aspect,
-                    near: this.config.camera.near,
-                    far: this.config.camera.far,
-                    position: this.config.camera.position,
-                    rotation: this.config.camera.rotation,
-                    matrixWorldNeedsUpdate: this.config.camera.matrixWorldNeedsUpdate
-                });
+                // Mark as initialized
+                this.config.initialized = true;
 
-                // Calculate distance from camera to origin
-                const distanceToOrigin = Math.sqrt(
-                    Math.pow(this.config.camera.position.x, 2) +
-                    Math.pow(this.config.camera.position.y, 2) +
-                    Math.pow(this.config.camera.position.z, 2)
-                );
-                console.log('📷 Camera distance to origin:', distanceToOrigin,
-                    '(should be between near=' + this.config.camera.near + ' and far=' + this.config.camera.far + ')');
+                console.log('✅ Configurator initialized successfully');
 
-                // Create renderer
-                this.config.renderer = new THREE.WebGLRenderer({
-                    antialias: true,
-                    alpha: true
-                });
-                this.config.renderer.setSize(width, height);
-                this.config.renderer.setPixelRatio(window.devicePixelRatio);
-                this.config.renderer.shadowMap.enabled = true;
-                this.config.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
-
-                console.log('🎨 Renderer created:', {
-                    width: width,
-                    height: height,
-                    pixelRatio: window.devicePixelRatio,
-                    domElementWidth: this.config.renderer.domElement.width,
-                    domElementHeight: this.config.renderer.domElement.height
-                });
-
-                // Check if container already has a canvas
-                const existingCanvas = container.querySelector('canvas');
-                if (existingCanvas) {
-                    console.error('❌ Container already has a canvas! Removing old canvas.');
-                    container.removeChild(existingCanvas);
+                // Trigger initialization complete event
+                const jQuery = window.jQuery || window.$;
+                if (jQuery) {
+                    jQuery(document).trigger('configuratorInitialized');
                 }
-
-                // Add renderer to container
-                container.appendChild(this.config.renderer.domElement);
-                console.log('🎨 Canvas appended to container');
-
-                // Verify only one canvas exists
-                const canvasCount = container.querySelectorAll('canvas').length;
-                console.log('🎨 Canvas count in container:', canvasCount);
-
-                // Log canvas and container dimensions
-                console.log('📐 Canvas dimensions:', {
-                    canvasWidth: this.config.renderer.domElement.width,
-                    canvasHeight: this.config.renderer.domElement.height,
-                    containerWidth: container.clientWidth,
-                    containerHeight: container.clientHeight,
-                    containerOffsetWidth: container.offsetWidth,
-                    containerOffsetHeight: container.offsetHeight
-                });
-
-                // Check if canvas is visible
-                const canvasStyle = window.getComputedStyle(this.config.renderer.domElement);
-                console.log('👁️ Canvas computed style:', {
-                    display: canvasStyle.display,
-                    visibility: canvasStyle.visibility,
-                    opacity: canvasStyle.opacity,
-                    width: canvasStyle.width,
-                    height: canvasStyle.height,
-                    zIndex: canvasStyle.zIndex,
-                    position: canvasStyle.position
-                });
-
-                // Check WebGL context
-                const gl = this.config.renderer.getContext();
-                console.log('🔧 WebGL context:', {
-                    contextValid: gl !== null,
-                    drawingBufferWidth: gl ? gl.drawingBufferWidth : 'N/A',
-                    drawingBufferHeight: gl ? gl.drawingBufferHeight : 'N/A',
-                    isContextLost: gl ? gl.isContextLost() : 'N/A'
-                });
-
-                // Set up lighting
-                this.setupLighting();
-
-                // Set up camera controls with optimized settings
-                if (typeof THREE.OrbitControls !== 'undefined') {
-                    this.config.controls = new THREE.OrbitControls(
-                        this.config.camera,
-                        this.config.renderer.domElement
-                    );
-                    this.config.controls.enableDamping = true;
-                    this.config.controls.dampingFactor = 0.08;
-                    // For objects up to 2.5m: allow zoom from 1m to 10m
-                    this.config.controls.minDistance = 1.0;
-                    this.config.controls.maxDistance = 10.0;
-                    this.config.controls.maxPolarAngle = Math.PI / 1.8; // Prevent going too low
-                    this.config.controls.minPolarAngle = Math.PI / 6;   // Prevent going too high
-                    this.config.controls.enablePan = true;
-                    this.config.controls.panSpeed = 0.5;
-                    this.config.controls.rotateSpeed = 0.8;
-                    this.config.controls.zoomSpeed = 1.0;
-                    // Target the center of the pegboard
-                    this.config.controls.target.set(0, 1.1, 0);
-                } else {
-                    console.warn('OrbitControls not loaded, camera controls will be limited');
-                }
-
-                // Handle window resize
-                this.setupResizeHandler();
-
-                // Start render loop
-                this.startRenderLoop();
-
-                // Final verification checks
-                console.log('✅ 3D scene initialized successfully');
-                console.log('🔍 Final verification:', {
-                    canvasInDOM: document.body.contains(this.config.renderer.domElement),
-                    canvasParent: this.config.renderer.domElement.parentElement ? this.config.renderer.domElement.parentElement.id : 'NO PARENT',
-                    canvasOffsetParent: this.config.renderer.domElement.offsetParent ? 'visible' : 'HIDDEN',
-                    containerHasCanvas: container.contains(this.config.renderer.domElement),
-                    sceneChildrenCount: this.config.scene.children.length
-                });
 
             } catch (error) {
-                console.error('Error initializing 3D scene:', error);
-                container.innerHTML = '<div class="configurator-error"><p>Failed to initialize 3D scene. Please refresh the page.</p></div>';
+                console.error('❌ Failed to initialize configurator:', error);
+                this.showError('Failed to initialize configurator: ' + error.message);
             }
         },
 
-        // Set up scene lighting
-        // Requirements: 2.3
-        setupLighting: function () {
-            if (!this.config.scene) return;
+        // Check for required dependencies
+        checkDependencies: function () {
+            const required = ['BlastiCore', 'BlastiModels', 'BlastiUI', 'BlastiCart', 'BlastiMemoryManager'];
+            const missing = [];
 
-            console.log('💡 Setting up lighting...');
-
-            // Ambient light for overall illumination
-            const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
-            this.config.scene.add(ambientLight);
-            console.log('💡 Added ambient light (intensity: 0.6)');
-
-            // Main directional light (sun-like)
-            const mainLight = new THREE.DirectionalLight(0xffffff, 0.8);
-            mainLight.position.set(5, 10, 7);
-            mainLight.castShadow = true;
-
-            // Configure shadow properties
-            mainLight.shadow.mapSize.width = 2048;
-            mainLight.shadow.mapSize.height = 2048;
-            mainLight.shadow.camera.near = 0.5;
-            mainLight.shadow.camera.far = 50;
-            mainLight.shadow.camera.left = -10;
-            mainLight.shadow.camera.right = 10;
-            mainLight.shadow.camera.top = 10;
-            mainLight.shadow.camera.bottom = -10;
-
-            this.config.scene.add(mainLight);
-            console.log('💡 Added main directional light at (5, 10, 7), intensity: 0.8');
-
-            // Fill light from opposite side
-            const fillLight = new THREE.DirectionalLight(0xffffff, 0.3);
-            fillLight.position.set(-5, 5, -5);
-            this.config.scene.add(fillLight);
-            console.log('💡 Added fill light at (-5, 5, -5), intensity: 0.3');
-
-            // Add a ground plane to receive shadows
-            const groundGeometry = new THREE.PlaneGeometry(20, 20);
-            const groundMaterial = new THREE.ShadowMaterial({ opacity: 0.2 });
-            const ground = new THREE.Mesh(groundGeometry, groundMaterial);
-            ground.rotation.x = -Math.PI / 2;
-            ground.position.y = -0.5;
-            ground.receiveShadow = true;
-            this.config.scene.add(ground);
-            console.log('💡 Added ground plane for shadows');
-
-            console.log('💡 Lighting setup complete. Total scene children:', this.config.scene.children.length);
-        },
-
-        // Set up window resize handler
-        // Requirements: 2.4
-        setupResizeHandler: function () {
-            const self = this;
-
-            window.addEventListener('resize', function () {
-                if (!self.config.container || !self.config.camera || !self.config.renderer) {
-                    return;
+            required.forEach(dep => {
+                if (typeof window[dep] === 'undefined') {
+                    missing.push(dep);
                 }
-
-                const width = self.config.container.clientWidth;
-                const height = self.config.container.clientHeight;
-
-                // Update camera aspect ratio
-                self.config.camera.aspect = width / height;
-                self.config.camera.updateProjectionMatrix();
-
-                // Update renderer size
-                self.config.renderer.setSize(width, height);
             });
-        },
 
-        // Start the render loop
-        // Requirements: 2.1, 2.4
-        startRenderLoop: function () {
-            const self = this;
-            let frameCount = 0;
-            let firstFrameLogged = false;
-
-            function animate() {
-                requestAnimationFrame(animate);
-
-                // Update controls if available
-                if (self.config.controls) {
-                    self.config.controls.update();
-                }
-
-                // Render the scene
-                if (self.config.renderer && self.config.scene && self.config.camera) {
-                    self.config.renderer.render(self.config.scene, self.config.camera);
-
-                    // Log first frame with detailed info
-                    if (!firstFrameLogged) {
-                        console.log('🎬 FIRST FRAME RENDERED:', {
-                            sceneChildren: self.config.scene.children.length,
-                            cameraPosition: self.config.camera.position,
-                            cameraRotation: self.config.camera.rotation,
-                            cameraTarget: self.config.controls ? self.config.controls.target : 'N/A',
-                            canvasWidth: self.config.renderer.domElement.width,
-                            canvasHeight: self.config.renderer.domElement.height,
-                            canvasVisible: self.config.renderer.domElement.offsetParent !== null,
-                            sceneBackground: self.config.scene.background
-                        });
-
-                        // Log all scene children
-                        console.log('🎬 Scene children details:');
-                        self.config.scene.children.forEach(function (child, index) {
-                            console.log('  Child ' + index + ':', {
-                                type: child.type,
-                                name: child.name,
-                                visible: child.visible,
-                                position: child.position,
-                                scale: child.scale,
-                                layers: child.layers.mask
-                            });
-                        });
-
-                        firstFrameLogged = true;
-                    }
-
-                    // Log every 60 frames (roughly once per second at 60fps)
-                    frameCount++;
-                    if (frameCount === 3600) {
-                        console.log('🔄 Rendering... Scene children:', self.config.scene.children.length,
-                            'Camera pos:', self.config.camera.position,
-                            'Canvas visible:', self.config.renderer.domElement.offsetParent !== null);
-                        frameCount = 0;
-                    }
-                }
+            if (missing.length > 0) {
+                console.error('❌ Missing required modules:', missing);
+                return false;
             }
 
-            console.log('🎬 Starting render loop...');
-            animate();
-        },
-
-        // Initialize 3D model loader with caching
-        // Requirements: 2.3 (display pegboard model), 9.2 (accept GLB files)
-        initializeModelLoader: function () {
-            const self = this;
-
+            // Check Three.js
             if (typeof THREE === 'undefined') {
-                console.error('THREE.js not available');
+                console.error('❌ Three.js not loaded');
                 return false;
             }
 
-            // Check if GLTFLoader is available (it might be a global or attached to THREE)
-            const GLTFLoaderClass = THREE.GLTFLoader || window.GLTFLoader;
-
-            if (typeof GLTFLoaderClass === 'undefined') {
-                console.warn('GLTFLoader not available yet. Will retry when needed.');
-                console.log('Available THREE properties:', Object.keys(THREE).filter(k => k.includes('Loader')));
-
-                // Set a flag to retry later
-                this.config.modelLoaderRetryNeeded = true;
-                return false;
-            }
-
-            // Create loading manager for progress tracking
-            const manager = new THREE.LoadingManager();
-
-            manager.onStart = function (url, itemsLoaded, itemsTotal) {
-                console.log('Started loading: ' + url);
-            };
-
-            manager.onLoad = function () {
-                console.log('All models loaded');
-            };
-
-            manager.onProgress = function (url, itemsLoaded, itemsTotal) {
-                const progress = (itemsLoaded / itemsTotal * 100).toFixed(0);
-                console.log('Loading progress: ' + progress + '%');
-            };
-
-            manager.onError = function (url) {
-                console.error('Error loading: ' + url);
-            };
-
-            // Initialize GLTFLoader
-            this.config.modelLoader = new GLTFLoaderClass(manager);
-            this.config.modelLoaderRetryNeeded = false;
-
-            console.log('Model loader initialized with caching support');
             return true;
         },
 
-        // Retry initializing model loader if it failed initially
-        // Requirements: 2.3, 9.2
-        retryInitializeModelLoader: function () {
-            if (!this.config.modelLoader && this.config.modelLoaderRetryNeeded) {
-                console.log('Retrying model loader initialization...');
-                return this.initializeModelLoader();
+        // Initialize all modules
+        initializeModules: function () {
+            console.log('🔧 Initializing modules...');
+
+            // Initialize memory manager first
+            this.config.modules.memoryManager = BlastiMemoryManager;
+
+            // Initialize 3D core
+            if (!BlastiCore.initializeScene('configurator-scene')) {
+                throw new Error('Failed to initialize 3D scene');
             }
-            return !!this.config.modelLoader;
+            this.config.modules.core = BlastiCore;
+
+            // Initialize model manager
+            if (!BlastiModels.initialize()) {
+                throw new Error('Failed to initialize model manager');
+            }
+            this.config.modules.models = BlastiModels;
+
+            // Initialize UI
+            BlastiUI.initialize();
+            this.config.modules.ui = BlastiUI;
+
+            // Initialize cart
+            BlastiCart.initialize();
+            this.config.modules.cart = BlastiCart;
+
+            console.log('✅ All modules initialized');
         },
 
-        // Load 3D model with caching and error handling
-        // Requirements: 2.3, 9.2
-        loadModel: function (modelUrl, productId) {
+        // Bind events between modules
+        bindModuleEvents: function () {
             const self = this;
 
-            return new Promise(function (resolve, reject) {
-                // Validate inputs
-                if (!modelUrl) {
-                    reject(new Error('Model URL is required'));
-                    return;
-                }
-
-                // Try to initialize model loader if not already done
-                if (!self.config.modelLoader) {
-                    console.log('Model loader not initialized, attempting to initialize now...');
-                    const initialized = self.retryInitializeModelLoader();
-
-                    if (!initialized) {
-                        reject(new Error('Model loader could not be initialized. GLTFLoader may not be loaded yet.'));
-                        return;
-                    }
-                }
-
-                // Check cache first (optimization)
-                const cacheKey = productId || modelUrl;
-                if (self.config.modelCache[cacheKey]) {
-                    console.log('Loading model from cache:', cacheKey);
-                    // Clone the cached model to avoid modifying the original
-                    const cachedModel = self.config.modelCache[cacheKey];
-                    const clonedModel = cachedModel.clone();
-                    resolve(clonedModel);
-                    return;
-                }
-
-                // Check if model is currently being loaded
-                if (self.config.loadingModels[cacheKey]) {
-                    console.log('Model already loading, waiting...:', cacheKey);
-                    // Wait for the existing load to complete
-                    self.config.loadingModels[cacheKey].then(resolve).catch(reject);
-                    return;
-                }
-
-                // Show loading state
-                self.showLoadingState(true);
-
-                // Create promise for this load operation
-                const loadPromise = new Promise(function (resolveLoad, rejectLoad) {
-                    // Load the model
-                    self.config.modelLoader.load(
-                        modelUrl,
-                        // onLoad callback
-                        function (gltf) {
-                            console.log('Model loaded successfully:', modelUrl);
-
-                            const model = gltf.scene;
-
-                            // Optimize model
-                            self.optimizeModel(model);
-
-                            // Cache the model
-                            self.config.modelCache[cacheKey] = model;
-
-                            // Remove from loading tracker
-                            delete self.config.loadingModels[cacheKey];
-
-                            // Hide loading state
-                            self.showLoadingState(false);
-
-                            // Clone for use (keep original in cache)
-                            const clonedModel = model.clone();
-                            resolveLoad(clonedModel);
-                        },
-                        // onProgress callback
-                        function (xhr) {
-                            if (xhr.lengthComputable) {
-                                const percentComplete = (xhr.loaded / xhr.total * 100).toFixed(0);
-                                console.log('Model loading: ' + percentComplete + '%');
-                                self.updateLoadingProgress(percentComplete);
-                            }
-                        },
-                        // onError callback
-                        function (error) {
-                            console.error('Error loading model:', modelUrl, error);
-
-                            // Remove from loading tracker
-                            delete self.config.loadingModels[cacheKey];
-
-                            // Hide loading state
-                            self.showLoadingState(false);
-
-                            // Show error to user
-                            self.showModelLoadError(modelUrl);
-
-                            rejectLoad(new Error('Failed to load 3D model: ' + (error.message || 'Unknown error')));
-                        }
-                    );
-                });
-
-                // Track this loading operation
-                self.config.loadingModels[cacheKey] = loadPromise;
-
-                // Return the promise
-                loadPromise.then(resolve).catch(reject);
-            });
-        },
-
-        // Optimize loaded model for performance
-        // Requirements: 2.3
-        optimizeModel: function (model) {
-            if (!model) return;
-
-            model.traverse(function (child) {
-                if (child.isMesh) {
-                    // Enable shadows
-                    child.castShadow = true;
-                    child.receiveShadow = true;
-
-                    // Optimize geometry
-                    if (child.geometry) {
-                        child.geometry.computeBoundingBox();
-                        child.geometry.computeBoundingSphere();
-                    }
-
-                    // Optimize materials
-                    if (child.material) {
-                        child.material.needsUpdate = true;
-
-                        // Set reasonable defaults if not set
-                        if (child.material.metalness === undefined) {
-                            child.material.metalness = 0.1;
-                        }
-                        if (child.material.roughness === undefined) {
-                            child.material.roughness = 0.8;
-                        }
-                    }
-                }
-            });
-
-            console.log('Model optimized for performance');
-        },
-
-        // Show/hide loading state
-        // Requirements: 2.3
-        showLoadingState: function (isLoading) {
-            const loadingIndicator = $('.model-loading-indicator');
-
-            if (isLoading) {
-                if (loadingIndicator.length === 0) {
-                    const indicator = $('<div class="model-loading-indicator">' +
-                        '<div class="loading-spinner"></div>' +
-                        '<div class="loading-text">Loading 3D model...</div>' +
-                        '<div class="loading-progress">0%</div>' +
-                        '</div>');
-                    $('.blasti-configurator-container').append(indicator);
-                } else {
-                    loadingIndicator.show();
-                }
-            } else {
-                loadingIndicator.fadeOut(300, function () {
-                    $(this).remove();
-                });
+            // Use jQuery from global scope
+            const jQuery = window.jQuery || window.$;
+            if (!jQuery) {
+                console.error('❌ jQuery not available for event binding');
+                return;
             }
-        },
 
-        // Update loading progress display
-        // Requirements: 2.3
-        updateLoadingProgress: function (percent) {
-            $('.loading-progress').text(percent + '%');
-        },
-
-        // Show model loading error
-        // Requirements: 2.3
-        showModelLoadError: function (modelUrl) {
-            const errorMessage = 'Failed to load 3D model. Please check that the model file exists and is in GLB/GLTF format.';
-            this.showError(errorMessage);
-
-            // Log detailed error for debugging
-            console.error('Model load error details:', {
-                url: modelUrl,
-                timestamp: new Date().toISOString()
+            // Pegboard selection
+            jQuery(document).on('pegboardSelected', function (event, pegboard) {
+                self.selectPegboard(pegboard);
             });
-        },
 
-        // Clear model cache (useful for memory management)
-        // Requirements: 2.3
-        clearModelCache: function () {
-            console.log('Clearing model cache...');
+            // Accessory selection for placement
+            jQuery(document).on('accessorySelected', function (event, accessory) {
+                self.enableAccessoryPlacement(accessory);
+            });
 
-            // Dispose of cached models to free memory
-            Object.keys(this.config.modelCache).forEach(function (key) {
-                const model = this.config.modelCache[key];
-                if (model) {
-                    model.traverse(function (child) {
-                        if (child.geometry) {
-                            child.geometry.dispose();
-                        }
-                        if (child.material) {
-                            if (Array.isArray(child.material)) {
-                                child.material.forEach(function (mat) {
-                                    mat.dispose();
-                                });
-                            } else {
-                                child.material.dispose();
-                            }
-                        }
-                    });
+            // Accessory placement
+            jQuery(document).on('accessoryPlaced', function (event, accessoryData) {
+                self.config.placedAccessories.push(accessoryData);
+                
+                // Sync with UI module
+                if (self.config.modules.ui) {
+                    if (self.config.modules.ui.addPlacedAccessory) {
+                        self.config.modules.ui.addPlacedAccessory(accessoryData);
+                    }
+                    // Also sync the full list to ensure consistency
+                    if (self.config.modules.ui.syncPlacedAccessories) {
+                        self.config.modules.ui.syncPlacedAccessories(self.config.placedAccessories);
+                    }
                 }
-            }.bind(this));
-
-            this.config.modelCache = {};
-            console.log('Model cache cleared');
-        },
-
-        // Get cache statistics
-        // Requirements: 2.3
-        getModelCacheStats: function () {
-            const stats = {
-                cachedModels: Object.keys(this.config.modelCache).length,
-                loadingModels: Object.keys(this.config.loadingModels).length,
-                cacheKeys: Object.keys(this.config.modelCache)
-            };
-
-            console.log('Model cache statistics:', stats);
-            return stats;
-        },
-
-        // Bind event listeners
-        bindEvents: function () {
-            const self = this;
-
-            // Pegboard selection with validation
-            $(document).on('click', '.pegboard-item', function () {
-                // Check if item is disabled (out of stock)
-                if ($(this).hasClass('disabled')) {
-                    self.showError('This pegboard is currently out of stock');
-                    return;
-                }
-
-                const pegboardId = $(this).data('product-id');
-                self.selectPegboard(pegboardId);
+                
+                // Notify UI that placement is completed
+                jQuery(document).trigger('placementCompleted');
             });
 
-            // Accessory selection with validation
-            $(document).on('click', '.accessory-item', function () {
-                // Check if item is disabled (out of stock)
-                if ($(this).hasClass('disabled')) {
-                    self.showError('This accessory is currently out of stock');
-                    return;
-                }
-
-                const accessoryId = $(this).data('product-id');
-                self.selectAccessory(accessoryId);
-            });
-
-            // Add to cart button
-            $(document).on('click', '#add-to-cart-btn', function () {
-                self.addToCart();
-            });
-
-            // Remove accessory
-            $(document).on('click', '.remove-accessory-btn', function () {
-                const placementId = $(this).data('placement-id');
+            // Accessory removal
+            jQuery(document).on('accessoryRemoved', function (event, placementId) {
                 self.removeAccessory(placementId);
             });
 
-            // Reposition accessory
-            $(document).on('click', '.reposition-accessory-btn', function () {
-                const placementId = $(this).data('placement-id');
-                self.repositionAccessory(placementId);
+            // Accessory repositioning
+            jQuery(document).on('accessoryRepositioning', function (event, placementId) {
+                self.enableAccessoryRepositioning(placementId);
             });
 
-            // Remove pegboard
-            $(document).on('click', '.remove-pegboard-btn', function () {
-                self.removePegboard();
+            // Configuration reset
+            jQuery(document).on('configurationReset', function () {
+                self.resetConfiguration();
             });
 
-            // Camera angle buttons (placeholder)
-            $(document).on('click', '.camera-angle-btn', function () {
-                const angle = $(this).data('angle');
-                self.setCameraAngle(angle);
-            });
-
-            // Accessory filter controls
-            // Requirements: 3.1, 12.2, 12.4
-
-            // Toggle filters visibility
-            $(document).on('click', '#toggle-filters-btn', function () {
-                $('#accessory-filters').slideToggle(200);
-                $(this).toggleClass('active');
-            });
-
-            // Search filter with debounce
-            let searchTimeout;
-            $(document).on('input', '#accessory-search', function () {
-                clearTimeout(searchTimeout);
-                const searchTerm = $(this).val();
-
-                searchTimeout = setTimeout(function () {
-                    self.applyAccessoryFilters();
-                }, 300);
-            });
-
-            // Category filter buttons
-            $(document).on('click', '#category-filters .filter-btn', function () {
-                $('#category-filters .filter-btn').removeClass('active');
-                $(this).addClass('active');
-                self.applyAccessoryFilters();
-            });
-
-            // Compatibility filter buttons
-            $(document).on('click', '#filter-compatible, #filter-all', function () {
-                $('#filter-compatible, #filter-all').removeClass('active');
-                $(this).addClass('active');
-                self.applyAccessoryFilters();
-            });
+            console.log('✅ Module events bound');
         },
 
-        // Apply accessory filters based on current filter state
-        // Requirements: 3.1, 12.2, 12.4
-        applyAccessoryFilters: function () {
-            const filterOptions = {};
+        // Select pegboard and load 3D model
+        selectPegboard: function (pegboard) {
+            console.log('🎯 Selecting pegboard:', pegboard.name);
 
-            // Get search term
-            const searchTerm = $('#accessory-search').val();
-            if (searchTerm) {
-                filterOptions.search = searchTerm;
+            this.config.currentPegboard = pegboard;
+
+            // Clear existing pegboard model
+            if (this.config.currentPegboardModel) {
+                this.config.modules.core.removeFromScene(this.config.currentPegboardModel);
+                this.config.currentPegboardModel = null;
             }
 
-            // Get selected category
-            const selectedCategory = $('#category-filters .filter-btn.active').data('category');
-            if (selectedCategory && selectedCategory !== 'all') {
-                filterOptions.category = selectedCategory;
-            }
+            // Load pegboard 3D model
+            if (pegboard.model_url) {
+                this.config.modules.models.loadModel(pegboard.model_url, pegboard.id)
+                    .then(gltf => {
+                        console.log('✅ Pegboard model loaded');
 
-            // Get compatibility filter
-            const compatibilityFilter = $('#filter-compatible').hasClass('active');
-            filterOptions.compatibleOnly = compatibilityFilter;
+                        const model = gltf.scene;
+                        this.config.currentPegboardModel = model;
 
-            // Apply filters
-            this.displayAccessories(filterOptions);
-        },
+                        // Position and scale model
+                        this.positionPegboardModel(model, pegboard.dimensions);
 
-        // Initialize category filter buttons based on available accessories
-        // Requirements: 12.4
-        initializeCategoryFilters: function () {
-            const self = this;
+                        // Add to scene
+                        this.config.modules.core.addToScene(model);
 
-            if (!this.config.allProducts) {
-                return;
-            }
+                        // Initialize grid system
+                        this.initializeGridSystem(pegboard.dimensions);
 
-            // Get all unique categories from accessories
-            const categories = new Set();
-            this.config.allProducts.forEach(function (product) {
-                if (product.type === 'accessory' && product.categories) {
-                    product.categories.forEach(function (category) {
-                        categories.add(category);
+                        // Focus camera on pegboard with proper framing
+                        this.config.modules.core.focusOnObject(model);
+
+                        // Set default to isometric view for better 3D perspective
+                        setTimeout(() => {
+                            this.config.modules.core.setCameraView('isometric');
+                        }, 500);
+
+                        console.log('🎯 Pegboard setup complete');
+                    })
+                    .catch(error => {
+                        console.error('❌ Failed to load pegboard model:', error);
+                        this.showError('Failed to load pegboard model');
                     });
-                }
-            });
-
-            // Add category filter buttons
-            const categoryFilters = $('#category-filters');
-            const allButton = categoryFilters.find('[data-category="all"]');
-
-            // Remove existing category buttons (except "All")
-            categoryFilters.find('.filter-btn:not([data-category="all"])').remove();
-
-            // Add buttons for each category
-            Array.from(categories).sort().forEach(function (category) {
-                const button = $('<button class="filter-btn" data-category="' + category + '" type="button">' +
-                    category +
-                    '</button>');
-                categoryFilters.append(button);
-            });
-
-            console.log('Category filters initialized with', categories.size, 'categories');
-        },
-
-        // Load products from server
-        loadProducts: function () {
-            const self = this;
-
-            $.ajax({
-                url: blastiConfigurator.ajaxUrl,
-                type: 'POST',
-                data: {
-                    action: 'blasti_get_products',
-                    nonce: blastiConfigurator.nonce
-                },
-                success: function (response) {
-                    if (response.success) {
-                        self.displayProducts(response.data);
-                    } else {
-                        console.error('Failed to load products:', response.data);
-                    }
-                },
-                error: function () {
-                    console.error('AJAX error loading products');
-                }
-            });
-        },
-
-        // Create pegboard element with preview image and specifications
-        // Requirements: 2.3, 12.1, 12.3
-        createPegboardElement: function (pegboard) {
-            const self = this;
-
-            // Use placeholder if no image
-            const imageUrl = pegboard.image_url || 'data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iNjAiIGhlaWdodD0iNjAiIHZpZXdCb3g9IjAgMCA2MCA2MCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48cmVjdCB3aWR0aD0iNjAiIGhlaWdodD0iNjAiIGZpbGw9IiNlMGUwZTAiLz48dGV4dCB4PSI1MCUiIHk9IjUwJSIgZm9udC1mYW1pbHk9IkFyaWFsIiBmb250LXNpemU9IjEwIiBmaWxsPSIjOTk5IiB0ZXh0LWFuY2hvcj0ibWlkZGxlIiBkeT0iLjNlbSI+Tm8gSW1hZ2U8L3RleHQ+PC9zdmc+';
-
-            // Build specifications display
-            let specsHtml = '';
-            if (pegboard.dimensions) {
-                const dims = pegboard.dimensions;
-                if (dims.width && dims.height) {
-                    specsHtml += '<div class="spec-item">' +
-                        '<span class="spec-label">Size:</span> ' +
-                        dims.width + ' × ' + dims.height +
-                        (dims.depth ? ' × ' + dims.depth : '') +
-                        '</div>';
-                }
-            }
-
-            // Add SKU if available
-            if (pegboard.sku) {
-                specsHtml += '<div class="spec-item">' +
-                    '<span class="spec-label">SKU:</span> ' + pegboard.sku +
-                    '</div>';
-            }
-
-            // Build badges
-            let badgesHtml = '';
-            if (pegboard.featured) {
-                badgesHtml += '<span class="product-badge featured">Featured</span> ';
-            }
-            if (!pegboard.in_stock) {
-                badgesHtml += '<span class="product-badge out-of-stock">Out of Stock</span> ';
-            } else if (pegboard.stock_quantity && pegboard.stock_quantity < 5) {
-                badgesHtml += '<span class="product-badge low-stock">Low Stock</span> ';
-            }
-
-            // Create the element
-            const item = $('<div class="product-item pegboard-item" ' +
-                'data-product-id="' + pegboard.id + '" ' +
-                'data-price="' + pegboard.price + '" ' +
-                'data-model-url="' + (pegboard.model_url || '') + '" ' +
-                'data-dimensions=\'' + JSON.stringify(pegboard.dimensions || {}) + '\' ' +
-                'title="' + pegboard.name + (pegboard.description ? ' - ' + pegboard.description : '') + '">' +
-                '<img src="' + imageUrl + '" alt="' + pegboard.name + '" ' +
-                'onerror="this.src=\'data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iNjAiIGhlaWdodD0iNjAiIHZpZXdCb3g9IjAgMCA2MCA2MCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48cmVjdCB3aWR0aD0iNjAiIGhlaWdodD0iNjAiIGZpbGw9IiNlMGUwZTAiLz48dGV4dCB4PSI1MCUiIHk9IjUwJSIgZm9udC1mYW1pbHk9IkFyaWFsIiBmb250LXNpemU9IjEwIiBmaWxsPSIjOTk5IiB0ZXh0LWFuY2hvcj0ibWlkZGxlIiBkeT0iLjNlbSI+Tm8gSW1hZ2U8L3RleHQ+PC9zdmc+\';">' +
-                '<div class="product-info">' +
-                '<div class="product-name">' + pegboard.name + '</div>' +
-                '<div class="product-price">' + pegboard.formatted_price + '</div>' +
-                (specsHtml ? '<div class="product-specs">' + specsHtml + '</div>' : '') +
-                (badgesHtml ? '<div class="product-badges">' + badgesHtml + '</div>' : '') +
-                '</div>' +
-                '</div>');
-
-            // Disable if out of stock
-            if (!pegboard.in_stock) {
-                item.addClass('disabled').css({
-                    'opacity': '0.6',
-                    'cursor': 'not-allowed'
-                });
-            }
-
-            return item;
-        },
-
-        // Create accessory element with preview image and specifications
-        // Requirements: 3.1, 12.2, 12.4
-        createAccessoryElement: function (accessory) {
-            const self = this;
-
-            // Use placeholder if no image
-            const imageUrl = accessory.image_url || 'data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iNjAiIGhlaWdodD0iNjAiIHZpZXdCb3g9IjAgMCA2MCA2MCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48cmVjdCB3aWR0aD0iNjAiIGhlaWdodD0iNjAiIGZpbGw9IiNlMGUwZTAiLz48dGV4dCB4PSI1MCUiIHk9IjUwJSIgZm9udC1mYW1pbHk9IkFyaWFsIiBmb250LXNpemU9IjEwIiBmaWxsPSIjOTk5IiB0ZXh0LWFuY2hvcj0ibWlkZGxlIiBkeT0iLjNlbSI+Tm8gSW1hZ2U8L3RleHQ+PC9zdmc+';
-
-            // Build specifications display
-            let specsHtml = '';
-            if (accessory.dimensions) {
-                const dims = accessory.dimensions;
-                if (dims.width && dims.height) {
-                    specsHtml += '<div class="spec-item">' +
-                        '<span class="spec-label">Size:</span> ' +
-                        dims.width + ' × ' + dims.height +
-                        '</div>';
-                }
-            }
-
-            // Add category if available
-            if (accessory.categories && accessory.categories.length > 0) {
-                specsHtml += '<div class="spec-item">' +
-                    '<span class="spec-label">Type:</span> ' + accessory.categories[0] +
-                    '</div>';
-            }
-
-            // Build badges
-            let badgesHtml = '';
-            if (accessory.featured) {
-                badgesHtml += '<span class="product-badge featured">Popular</span> ';
-            }
-            if (!accessory.in_stock) {
-                badgesHtml += '<span class="product-badge out-of-stock">Out of Stock</span> ';
-            } else if (accessory.stock_quantity && accessory.stock_quantity < 5) {
-                badgesHtml += '<span class="product-badge low-stock">Low Stock</span> ';
-            }
-
-            // Create the element
-            const item = $('<div class="product-item accessory-item" ' +
-                'data-product-id="' + accessory.id + '" ' +
-                'data-price="' + accessory.price + '" ' +
-                'data-model-url="' + (accessory.model_url || '') + '" ' +
-                'data-dimensions=\'' + JSON.stringify(accessory.dimensions || {}) + '\' ' +
-                'title="' + accessory.name + (accessory.description ? ' - ' + accessory.description : '') + '">' +
-                '<img src="' + imageUrl + '" alt="' + accessory.name + '" ' +
-                'onerror="this.src=\'data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iNjAiIGhlaWdodD0iNjAiIHZpZXdCb3g9IjAgMCA2MCA2MCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48cmVjdCB3aWR0aD0iNjAiIGhlaWdodD0iNjAiIGZpbGw9IiNlMGUwZTAiLz48dGV4dCB4PSI1MCUiIHk9IjUwJSIgZm9udC1mYW1pbHk9IkFyaWFsIiBmb250LXNpemU9IjEwIiBmaWxsPSIjOTk5IiB0ZXh0LWFuY2hvcj0ibWlkZGxlIiBkeT0iLjNlbSI+Tm8gSW1hZ2U8L3RleHQ+PC9zdmc+\';">' +
-                '<div class="product-info">' +
-                '<div class="product-name">' + accessory.name + '</div>' +
-                '<div class="product-price">' + accessory.formatted_price + '</div>' +
-                (specsHtml ? '<div class="product-specs">' + specsHtml + '</div>' : '') +
-                (badgesHtml ? '<div class="product-badges">' + badgesHtml + '</div>' : '') +
-                '</div>' +
-                '</div>');
-
-            // Disable if out of stock
-            if (!accessory.in_stock) {
-                item.addClass('disabled').css({
-                    'opacity': '0.6',
-                    'cursor': 'not-allowed'
-                });
-            }
-
-            return item;
-        },
-
-        // Display products in the interface
-        // Requirements: 2.3, 12.1, 12.3
-        displayProducts: function (data) {
-            const self = this;
-
-            // Store all products for filtering
-            this.config.allProducts = data.products || [];
-
-            // Display pegboards with enhanced UI
-            const pegboardList = $('#pegboard-list');
-            if (pegboardList.length && data.products) {
-                pegboardList.empty();
-
-                // Filter pegboards
-                const pegboards = data.products.filter(function (product) {
-                    return product.type === 'pegboard';
-                });
-
-                if (pegboards.length === 0) {
-                    pegboardList.html('<p style="padding: 10px; color: #666;">No pegboards available</p>');
-                    return;
-                }
-
-                pegboards.forEach(function (pegboard) {
-                    const item = self.createPegboardElement(pegboard);
-                    pegboardList.append(item);
-
-                    // Cache price data
-                    self.config.productPrices[pegboard.id] = {
-                        id: pegboard.id,
-                        price: pegboard.price,
-                        formatted_price: pegboard.formatted_price
-                    };
-                });
-            }
-
-            // Initialize category filters based on available accessories
-            // Requirements: 12.4
-            this.initializeCategoryFilters();
-
-            // Display accessories with enhanced UI and filtering
-            // Requirements: 3.1, 12.2, 12.4
-            this.displayAccessories();
-        },
-
-        // Display accessories with filtering by compatibility
-        // Requirements: 3.1, 12.2, 12.4
-        displayAccessories: function (filterOptions) {
-            const self = this;
-            filterOptions = filterOptions || {};
-
-            const accessoryList = $('#accessory-list');
-            if (!accessoryList.length || !this.config.allProducts) {
-                return;
-            }
-
-            accessoryList.empty();
-
-            // Filter accessories
-            let accessories = this.config.allProducts.filter(function (product) {
-                return product.type === 'accessory';
-            });
-
-            if (accessories.length === 0) {
-                accessoryList.html('<p style="padding: 10px; color: #666;">No accessories available</p>');
-                return;
-            }
-
-            // Apply compatibility filter if pegboard is selected
-            // Requirements: 3.1, 12.2
-            if (this.config.currentPegboard && filterOptions.compatibleOnly !== false) {
-                accessories = this.filterAccessoriesByCompatibility(accessories, this.config.currentPegboard.id);
-            }
-
-            // Apply category filter if specified
-            // Requirements: 12.4
-            if (filterOptions.category) {
-                accessories = accessories.filter(function (accessory) {
-                    return accessory.categories && accessory.categories.includes(filterOptions.category);
-                });
-            }
-
-            // Apply search filter if specified
-            if (filterOptions.search) {
-                const searchTerm = filterOptions.search.toLowerCase();
-                accessories = accessories.filter(function (accessory) {
-                    return accessory.name.toLowerCase().includes(searchTerm) ||
-                        (accessory.description && accessory.description.toLowerCase().includes(searchTerm));
-                });
-            }
-
-            // Sort accessories: popular first, then by name
-            // Requirements: 12.2
-            accessories.sort(function (a, b) {
-                // Featured/popular items first
-                if (a.featured && !b.featured) return -1;
-                if (!a.featured && b.featured) return 1;
-
-                // Then alphabetically
-                return a.name.localeCompare(b.name);
-            });
-
-            // Display filtered accessories
-            if (accessories.length === 0) {
-                let message = 'No accessories found';
-                if (this.config.currentPegboard) {
-                    message = 'No compatible accessories found for this pegboard';
-                }
-                if (filterOptions.search) {
-                    message = 'No accessories match your search';
-                }
-                accessoryList.html('<p style="padding: 10px; color: #666;">' + message + '</p>');
-                return;
-            }
-
-            // Group accessories by category for better organization
-            // Requirements: 12.4
-            const categorizedAccessories = this.categorizeAccessories(accessories);
-
-            // Display accessories by category
-            Object.keys(categorizedAccessories).forEach(function (category) {
-                const categoryAccessories = categorizedAccessories[category];
-
-                // Add category header if there are multiple categories
-                if (Object.keys(categorizedAccessories).length > 1) {
-                    const categoryHeader = $('<div class="accessory-category-header">' +
-                        '<h4>' + category + '</h4>' +
-                        '</div>');
-                    accessoryList.append(categoryHeader);
-                }
-
-                // Add accessories in this category
-                categoryAccessories.forEach(function (accessory) {
-                    const item = self.createAccessoryElement(accessory);
-
-                    // Add compatibility indicator if pegboard is selected
-                    if (self.config.currentPegboard) {
-                        const isCompatible = self.isAccessoryCompatible(accessory, self.config.currentPegboard.id);
-                        if (isCompatible) {
-                            item.addClass('compatible');
-                            item.find('.product-badges').prepend('<span class="product-badge compatible">Compatible</span> ');
-                        }
-                    }
-
-                    accessoryList.append(item);
-
-                    // Cache price data
-                    self.config.productPrices[accessory.id] = {
-                        id: accessory.id,
-                        price: accessory.price,
-                        formatted_price: accessory.formatted_price
-                    };
-                });
-            });
-
-            // Update accessory count display
-            this.updateAccessoryCount(accessories.length);
-        },
-
-        // Filter accessories by compatibility with selected pegboard
-        // Requirements: 3.1, 12.2
-        filterAccessoriesByCompatibility: function (accessories, pegboardId) {
-            const self = this;
-
-            return accessories.filter(function (accessory) {
-                return self.isAccessoryCompatible(accessory, pegboardId);
-            });
-        },
-
-        // Check if accessory is compatible with pegboard
-        // Requirements: 3.1, 12.2
-        isAccessoryCompatible: function (accessory, pegboardId) {
-            // If no compatibility data, assume compatible
-            if (!accessory.compatibility || accessory.compatibility.length === 0) {
-                return true;
-            }
-
-            // Check if pegboard ID is in compatibility list
-            return accessory.compatibility.includes(pegboardId) ||
-                accessory.compatibility.includes('all') ||
-                accessory.compatibility.includes('*');
-        },
-
-        // Categorize accessories for organized display
-        // Requirements: 12.4
-        categorizeAccessories: function (accessories) {
-            const categorized = {};
-
-            accessories.forEach(function (accessory) {
-                let category = 'Other';
-
-                if (accessory.categories && accessory.categories.length > 0) {
-                    category = accessory.categories[0];
-                }
-
-                if (!categorized[category]) {
-                    categorized[category] = [];
-                }
-
-                categorized[category].push(accessory);
-            });
-
-            return categorized;
-        },
-
-        // Update accessory count display
-        updateAccessoryCount: function (count) {
-            const countDisplay = $('.accessory-count');
-            if (countDisplay.length) {
-                countDisplay.text(count + ' ' + (count === 1 ? 'accessory' : 'accessories'));
             }
         },
 
-        // Select a pegboard
-        // Requirements: 2.3 (display pegboard model), 3.3 (grid system)
-        selectPegboard: function (pegboardId) {
-            console.log('Selecting pegboard:', pegboardId);
-            const self = this;
-
-            // Get pegboard data from the UI element
-            const pegboardElement = $('.pegboard-item[data-product-id="' + pegboardId + '"]');
-            const dimensionsData = pegboardElement.data('dimensions') || {};
-
-            const pegboardData = {
-                id: pegboardId,
-                name: pegboardElement.find('.product-name').text(),
-                price: pegboardElement.data('price') || 0,
-                model_url: pegboardElement.data('model-url') || '',
-                dimensions: dimensionsData
-            };
-
-            // Check if model URL is provided
-            if (!pegboardData.model_url) {
-                console.warn('No model URL provided for pegboard');
-                this.showError('This pegboard does not have a 3D model configured. Please configure a model in the admin panel.');
-                return;
-            }
-
-            // Show loading message
-            this.showMessage('Loading pegboard...', 'info');
-
-            // Load 3D model first, only update UI if successful
-            console.log('Loading pegboard 3D model:', pegboardData.model_url);
-
-            this.loadModel(pegboardData.model_url, 'pegboard-' + pegboardId)
-                .then(function (model) {
-                    console.log('Pegboard model loaded successfully');
-
-                    // Remove any existing pegboard model and accessories
-                    if (self.config.currentPegboardModel) {
-                        self.config.scene.remove(self.config.currentPegboardModel);
-                    }
-
-                    // Clear placed accessories when changing pegboard
-                    self.config.placedAccessories.forEach(function (accessory) {
-                        if (accessory.model) {
-                            self.config.scene.remove(accessory.model);
-                        }
-                    });
-                    self.config.placedAccessories = [];
-                    self.updatePlacedAccessoriesDisplay();
-
-                    // Position and scale the pegboard model
-                    self.positionPegboardModel(model, pegboardData.dimensions);
-
-                    // Add to scene
-                    self.config.scene.add(model);
-                    console.log('Model added to scene. Scene children count:', self.config.scene.children.length);
-
-                    // Store reference
-                    self.config.currentPegboardModel = model;
-
-                    // Log final model state
-                    const finalBox = new THREE.Box3().setFromObject(model);
-                    const finalSize = new THREE.Vector3();
-                    finalBox.getSize(finalSize);
-                    console.log('Final model size in scene:', finalSize);
-                    console.log('Final model position:', model.position);
-                    console.log('Final model scale:', model.scale);
-
-                    // Check model contents
-                    let meshCount = 0;
-                    let materialCount = 0;
-                    model.traverse(function (child) {
-                        if (child.isMesh) {
-                            meshCount++;
-                            if (child.material) {
-                                materialCount++;
-                                console.log('Mesh material:', {
-                                    visible: child.visible,
-                                    materialType: child.material.type,
-                                    opacity: child.material.opacity,
-                                    transparent: child.material.transparent
-                                });
-                            }
-                        }
-                    });
-                    console.log('Model contains:', meshCount, 'meshes with', materialCount, 'materials');
-
-                    // Add axes helper (shows X=red, Y=green, Z=blue)
-                    // Always show axes for orientation reference
-                    const axesHelper = new THREE.AxesHelper(0.5); // 50cm long
-                    self.config.scene.add(axesHelper);
-                    console.log('Added axes helper (50cm) at origin');
-
-                    // Initialize grid system for accessory placement using ACTUAL model size
-                    const actualSize = new THREE.Vector3();
-                    finalBox.getSize(actualSize);
-                    const actualDimensions = {
-                        width: actualSize.x,
-                        height: actualSize.y,
-                        depth: actualSize.z
-                    };
-                    console.log('🔧 Using actual pegboard size for grid:', actualDimensions);
-                    self.initializeGridSystem(actualDimensions);
-
-                    // DON'T adjust camera for pegboard - keep the default view
-                    // The pegboard should be visible from the initial camera position
-                    // self.frameCameraToModel(model);  // Commented out - causes camera to move too close
-                    console.log('🎥 Keeping camera at default position for better overview');
-
-                    // NOW update configuration and UI (only after successful load)
-                    self.config.currentPegboard = pegboardData;
-
-                    // Update UI
-                    $('.pegboard-item').removeClass('selected');
-                    pegboardElement.addClass('selected');
-
-                    // Update current pegboard display
-                    $('#current-pegboard').html(
-                        '<div class="selected-pegboard">' +
-                        '<span class="pegboard-name">' + pegboardData.name + '</span>' +
-                        '<button class="remove-pegboard-btn" type="button">&times;</button>' +
-                        '</div>'
-                    );
-
-                    // Update price
-                    self.updatePrice();
-
-                    // Refresh accessory list to show only compatible accessories
-                    // Requirements: 3.1, 12.2
-                    self.displayAccessories({ compatibleOnly: true });
-
-                    // Show success message
-                    self.showMessage('Pegboard "' + pegboardData.name + '" added successfully!', 'success');
-
-                    console.log('Pegboard model added to scene with grid system');
-                })
-                .catch(function (error) {
-                    console.error('Failed to load pegboard model:', error);
-                    self.showError('Failed to load 3D model for this pegboard. Please check that the model file exists and is in GLB/GLTF format.');
-
-                    // Do NOT update UI or configuration if model fails to load
-                    $('.pegboard-item').removeClass('selected');
-                });
-        },
-
-        // Position and scale pegboard model based on dimensions
-        // Requirements: 2.3
+        // Position and scale pegboard model
         positionPegboardModel: function (model, dimensions) {
             if (!model) return;
 
-            // IMPORTANT: Reset any existing transformations first
-            model.scale.set(1, 1, 1);
-            model.position.set(0, 0, 0);
-            model.rotation.set(0, 0, 0);
+            // Get model size before positioning
+            const beforeBox = new THREE.Box3().setFromObject(model);
+            const beforeSize = beforeBox.getSize(new THREE.Vector3());
+            const beforeCenter = beforeBox.getCenter(new THREE.Vector3());
 
-            // Force update the matrix
-            model.updateMatrix();
-            model.updateMatrixWorld(true);
-
-            // Calculate bounding box to understand ORIGINAL model size
-            const box = new THREE.Box3().setFromObject(model);
-            const size = new THREE.Vector3();
-            box.getSize(size);
-
-            console.log('🔧 Model original size (after reset):', size);
-            console.log('🔧 Target dimensions:', dimensions);
-
-            // Check if model is lying flat (Y dimension is much smaller than X or Z)
-            const isLyingFlat = size.y < Math.max(size.x, size.z) * 0.5;
-            if (isLyingFlat) {
-                console.log('⚠️ Model appears to be lying flat (Y=' + size.y + ' vs X=' + size.x + ', Z=' + size.z + ')');
-                console.log('🔄 Rotating model 90° around X axis to stand it up');
-                model.rotation.x = Math.PI / 2; // Rotate 90 degrees
-                model.updateMatrix();
-                model.updateMatrixWorld(true);
-
-                // Recalculate size after rotation
-                const rotatedBox = new THREE.Box3().setFromObject(model);
-                rotatedBox.getSize(size);
-                console.log('🔧 Model size after rotation:', size);
-            }
-
-            // Check if model is in centimeters (needs conversion to meters)
-            // If largest dimension > 10, assume it's in centimeters
-            const maxDim = Math.max(size.x, size.y, size.z);
-            let scale = 1;
-
-            if (maxDim > 10) {
-                // Model is in centimeters, convert to meters
-                scale = 0.01; // Divide by 100
-                console.log('🔧 Model appears to be in centimeters, converting to meters (scale: 0.01)');
-            }
-
-            console.log('🔧 Model size:', {
-                original: { x: size.x, y: size.y, z: size.z },
-                unit: maxDim > 10 ? 'centimeters' : 'meters',
-                finalSize: {
-                    x: (size.x * scale).toFixed(3) + 'm',
-                    y: (size.y * scale).toFixed(3) + 'm',
-                    z: (size.z * scale).toFixed(3) + 'm'
-                }
+            console.log('🔍 Pegboard before positioning:', {
+                size: beforeSize,
+                center: beforeCenter,
+                expectedDimensions: dimensions
             });
 
-            model.scale.set(scale, scale, scale);
+            // Center the model
+            model.position.sub(beforeCenter);
 
-            // Position pegboard - center it and lift it off the ground
-            // After rotation and scaling, recalculate the bounding box
-            model.updateMatrix();
-            model.updateMatrixWorld(true);
+            // Check if pegboard is lying flat (needs rotation)
+            const isFlat = beforeSize.y < Math.max(beforeSize.x, beforeSize.z) * 0.5;
 
-            const finalBox = new THREE.Box3().setFromObject(model);
-            const finalSize = new THREE.Vector3();
-            const finalCenter = new THREE.Vector3();
-            finalBox.getSize(finalSize);
-            finalBox.getCenter(finalCenter);
-
-            // Position so the bottom of the pegboard is at y=0 and centered on X and Z
-            model.position.set(
-                -finalCenter.x,  // Center on X axis
-                finalSize.y / 2 - finalCenter.y,  // Bottom at y=0
-                -finalCenter.z   // Center on Z axis
-            );
-
-            // Force update transformations
-            model.updateMatrix();
-            model.updateMatrixWorld(true);
-
-            console.log('🔧 Pegboard positioned at:', model.position);
-            console.log('🔧 Pegboard scale:', model.scale);
-            console.log('🔧 Pegboard final size:', finalSize);
-        },
-
-        // Initialize grid system for accessory placement with peg holes
-        // Requirements: 3.3
-        initializeGridSystem: function (dimensions) {
-            const self = this;
-
-            // Peg hole spacing (standard pegboard has holes every 1 inch = 2.54cm)
-            const pegHoleSpacing = 0.0254; // 2.54cm in meters
-
-            // Get dimensions and convert from cm to meters if needed
-            let width = dimensions && dimensions.width ? dimensions.width : 1.0;
-            let height = dimensions && dimensions.height ? dimensions.height : 1.0;
-
-            // If dimensions are > 10, assume they're in cm and convert to meters
-            if (width > 10) {
-                width = width / 100;
-                height = height / 100;
-                console.log('Grid: Converted dimensions from cm to meters:', { width: width, height: height });
+            if (isFlat) {
+                console.log('🔄 Pegboard is flat, rotating to stand upright');
+                // Rotate 90 degrees around X-axis to make it stand up
+                model.rotation.x = Math.PI / 2;
             }
 
-            // Generate peg hole positions
-            const pegHoles = [];
-            const holesX = Math.floor(width / pegHoleSpacing);
-            const holesY = Math.floor(height / pegHoleSpacing);
+            // Position at origin
+            model.position.set(0, 0, 0);
 
-            for (let x = 0; x <= holesX; x++) {
-                for (let y = 0; y <= holesY; y++) {
-                    pegHoles.push({
-                        x: (x * pegHoleSpacing) - (width / 2),
-                        y: (y * pegHoleSpacing) - (height / 2),
-                        occupied: false
-                    });
+            // Verify final positioning and get actual dimensions
+            const afterBox = new THREE.Box3().setFromObject(model);
+            const afterSize = afterBox.getSize(new THREE.Vector3());
+            const afterCenter = afterBox.getCenter(new THREE.Vector3());
+
+            // Update dimensions with actual model size if not provided
+            if (dimensions) {
+                dimensions.actualWidth = afterSize.x;
+                dimensions.actualHeight = afterSize.y;
+                dimensions.actualDepth = afterSize.z;
+                
+                // Use actual depth for grid system if not specified
+                if (!dimensions.depth) {
+                    dimensions.depth = afterSize.z;
                 }
             }
 
-            // Store grid configuration with peg holes
+            console.log('📐 Pegboard after positioning:', {
+                size: afterSize,
+                center: afterCenter,
+                position: model.position,
+                scale: model.scale,
+                updatedDimensions: dimensions
+            });
+
+            // Check if size matches expected dimensions
+            if (dimensions) {
+                const expectedWidth = dimensions.width || 0.22; // Default 22cm
+                const actualWidth = afterSize.x;
+                const ratio = actualWidth / expectedWidth;
+
+                console.log('📊 Size comparison:', {
+                    expected: expectedWidth + 'm',
+                    actual: actualWidth + 'm',
+                    depth: afterSize.z + 'm',
+                    ratio: ratio,
+                    issue: ratio > 10 ? 'MODEL TOO LARGE' : ratio < 0.1 ? 'MODEL TOO SMALL' : 'OK'
+                });
+            }
+        },
+
+        // Initialize grid system for accessory placement
+        initializeGridSystem: function (dimensions) {
+            if (!dimensions) {
+                console.warn('⚠️ No dimensions provided for grid system');
+                return;
+            }
+
+            const pegHoleSpacing = 0.0254; // 2.54cm in meters
+            const width = dimensions.width || 1.0;
+            const height = dimensions.height || 1.0;
+            const depth = dimensions.depth || 0.02; // Default 2cm depth
+
+            // Calculate the front face Z position (where accessories should hang)
+            // Accessories should be positioned on the front face of the pegboard
+            const frontFaceZ = depth / 2 + 0.01; // Slightly in front of the pegboard surface
+
+            // Calculate peg hole positions on the front face
+            const pegHoles = [];
+            const cols = Math.floor(width / pegHoleSpacing);
+            const rows = Math.floor(height / pegHoleSpacing);
+
+            for (let row = 0; row < rows; row++) {
+                for (let col = 0; col < cols; col++) {
+                    const x = (col * pegHoleSpacing) - (width / 2) + (pegHoleSpacing / 2);
+                    const y = (row * pegHoleSpacing) - (height / 2) + (pegHoleSpacing / 2);
+
+                    // Position accessories on the front face of the pegboard
+                    pegHoles.push({ x, y, z: frontFaceZ });
+                }
+            }
+
+            // Store grid configuration
             this.config.gridSystem = {
                 enabled: true,
                 pegHoleSpacing: pegHoleSpacing,
                 width: width,
                 height: height,
-                pegHoles: pegHoles,
-                occupiedPositions: new Map() // Map of placement IDs to occupied peg holes
+                depth: depth,
+                frontFaceZ: frontFaceZ,
+                pegHoles: pegHoles
             };
 
             // Create visual grid helper (optional, for debugging)
-            if (this.config.showGrid) {
-                this.createPegHoleHelper(pegHoles);
+            if (window.location.search.includes('debug=true')) {
+                this.createGridHelper();
             }
 
-            console.log('Grid system initialized with peg holes:', {
+            console.log('🔲 Grid system initialized:', {
+                pegHoles: pegHoles.length,
                 spacing: pegHoleSpacing,
-                width: width,
-                height: height,
-                totalHoles: pegHoles.length,
-                holesX: holesX + 1,
-                holesY: holesY + 1
+                dimensions: { width, height, depth },
+                frontFaceZ: frontFaceZ
             });
         },
 
-        // Create visual peg hole helper
-        // Requirements: 3.3
-        createPegHoleHelper: function (pegHoles) {
-            // Remove existing helper if present
-            if (this.config.pegHoleHelper) {
-                this.config.scene.remove(this.config.pegHoleHelper);
+        // Enable accessory placement mode
+        enableAccessoryPlacement: function (accessory) {
+            console.log('🎯 Enabling placement mode for:', accessory.name);
+
+            if (!this.config.currentPegboard) {
+                this.showError('Please select a pegboard first');
+                return;
             }
 
-            const pegHoleHelper = new THREE.Group();
-            const dotGeometry = new THREE.CircleGeometry(0.002, 8);
-            const dotMaterial = new THREE.MeshBasicMaterial({
-                color: 0x888888,
-                opacity: 0.5,
-                transparent: true,
-                side: THREE.DoubleSide
-            });
+            // Load accessory model
+            this.config.modules.models.loadModel(accessory.model_url, accessory.id)
+                .then(gltf => {
+                    console.log('✅ Accessory model loaded for placement');
 
-            pegHoles.forEach(function (hole) {
-                const dot = new THREE.Mesh(dotGeometry, dotMaterial);
-                dot.position.set(hole.x, hole.y, 0.01);
-                pegHoleHelper.add(dot);
-            });
+                    this.config.placementMode = {
+                        active: true,
+                        accessoryData: accessory,
+                        model: gltf.scene,
+                        previewModel: null
+                    };
 
-            this.config.scene.add(pegHoleHelper);
-            this.config.pegHoleHelper = pegHoleHelper;
-
-            console.log('Peg hole helper created with', pegHoles.length, 'holes');
+                    // Enable placement UI
+                    this.enablePlacementMode();
+                })
+                .catch(error => {
+                    console.error('❌ Failed to load accessory model:', error);
+                    this.showError('Failed to load accessory model');
+                });
         },
 
-        // Create visual grid helper
-        // Requirements: 3.3
-        createGridHelper: function (width, height, gridSize) {
-            // Remove existing grid helper if present
-            if (this.config.gridHelper) {
-                this.config.scene.remove(this.config.gridHelper);
-            }
+        // Enable placement mode UI and interactions
+        enablePlacementMode: function () {
+            const self = this;
 
-            const gridHelper = new THREE.Group();
-
-            // Create grid lines
-            const material = new THREE.LineBasicMaterial({
-                color: 0x888888,
-                opacity: 0.3,
-                transparent: true
-            });
-
-            // Vertical lines
-            for (let x = -width / 2; x <= width / 2; x += gridSize) {
-                const geometry = new THREE.BufferGeometry().setFromPoints([
-                    new THREE.Vector3(x, -height / 2, 0.01),
-                    new THREE.Vector3(x, height / 2, 0.01)
-                ]);
-                const line = new THREE.Line(geometry, material);
-                gridHelper.add(line);
-            }
-
-            // Horizontal lines
-            for (let y = -height / 2; y <= height / 2; y += gridSize) {
-                const geometry = new THREE.BufferGeometry().setFromPoints([
-                    new THREE.Vector3(-width / 2, y, 0.01),
-                    new THREE.Vector3(width / 2, y, 0.01)
-                ]);
-                const line = new THREE.Line(geometry, material);
-                gridHelper.add(line);
-            }
-
-            this.config.scene.add(gridHelper);
-            this.config.gridHelper = gridHelper;
-
-            console.log('Grid helper created');
-        },
-
-        // Snap position to nearest peg hole
-        // Requirements: 3.3
-        snapToGrid: function (position) {
-            if (!this.config.gridSystem || !this.config.gridSystem.enabled) {
-                return position;
-            }
-
-            // Find nearest peg hole
-            const pegHoles = this.config.gridSystem.pegHoles;
-            let nearestHole = null;
-            let minDistance = Infinity;
-
-            pegHoles.forEach(function (hole) {
-                const dx = hole.x - position.x;
-                const dy = hole.y - position.y;
-                const distance = Math.sqrt(dx * dx + dy * dy);
-
-                if (distance < minDistance) {
-                    minDistance = distance;
-                    nearestHole = hole;
+            // Create preview model
+            const previewModel = this.config.placementMode.model.clone();
+            previewModel.traverse(child => {
+                if (child.material) {
+                    child.material = child.material.clone();
+                    child.material.transparent = true;
+                    child.material.opacity = 0.7;
                 }
             });
 
-            if (nearestHole) {
-                return {
-                    x: nearestHole.x,
-                    y: nearestHole.y,
-                    z: position.z
-                };
-            }
+            this.config.placementMode.previewModel = previewModel;
+            this.config.modules.core.addToScene(previewModel);
 
-            return position;
+            // Bind mouse events
+            const canvas = this.config.modules.core.config.renderer.domElement;
+
+            canvas.addEventListener('mousemove', function (event) {
+                self.updatePlacementPreview(event);
+            });
+
+            canvas.addEventListener('click', function (event) {
+                self.placeAccessoryAtClick(event);
+            });
+
+            // Update cursor
+            canvas.style.cursor = 'crosshair';
+
+            console.log('✅ Placement mode enabled');
         },
 
-        // Find peg hole at position (with small tolerance)
-        // Requirements: 3.3
-        findPegHoleAtPosition: function (position) {
-            if (!this.config.gridSystem) {
-                return null;
-            }
+        // Enhanced placement preview with better visual feedback (Requirements 3.2, 3.3)
+        updatePlacementPreview: function (event) {
+            if (!this.config.placementMode || !this.config.placementMode.active) return;
 
-            const tolerance = 0.001; // 1mm tolerance
-            const pegHoles = this.config.gridSystem.pegHoles;
-
-            for (let i = 0; i < pegHoles.length; i++) {
-                const hole = pegHoles[i];
-                const dx = Math.abs(hole.x - position.x);
-                const dy = Math.abs(hole.y - position.y);
-
-                if (dx < tolerance && dy < tolerance) {
-                    return hole;
+            const intersectionData = this.getIntersectionPoint(event);
+            if (!intersectionData || !intersectionData.point) {
+                // Hide preview when not over pegboard
+                if (this.config.placementMode.previewModel) {
+                    this.config.placementMode.previewModel.visible = false;
                 }
+                this.updateSceneValidityState(null);
+                return;
             }
 
-            return null;
+            // Show preview model
+            const previewModel = this.config.placementMode.previewModel;
+            previewModel.visible = true;
+
+            // Snap to grid (this will automatically use the front face Z position)
+            const snappedPosition = this.snapToGrid(intersectionData.point);
+            
+            // If no valid snap position found, hide preview and show invalid state
+            if (!snappedPosition) {
+                previewModel.visible = false;
+                this.updateSceneValidityState(false);
+                return;
+            }
+
+            previewModel.position.copy(snappedPosition);
+            
+            // Apply the same positioning logic as final placement
+            this.applyAccessoryPositioning(previewModel, this.config.placementMode.accessoryData);
+
+            // Check if position is valid
+            const dimensions = this.config.modules.models.getModelDimensions(this.config.placementMode.model);
+            const isValid = this.isValidGridPosition(snappedPosition, dimensions);
+
+            // Update preview color with enhanced visual feedback
+            this.updatePreviewColor(previewModel, isValid);
+            
+            // Update scene validity state
+            this.updateSceneValidityState(isValid);
+            
+            // Update cursor based on validity
+            const canvas = this.config.modules.core.config.renderer.domElement;
+            canvas.style.cursor = isValid ? 'crosshair' : 'not-allowed';
         },
 
-        // Check if grid position is valid for placement
-        // Requirements: 3.3, 3.4
-        isValidGridPosition: function (position, dimensions) {
-            if (!this.config.gridSystem) {
+        // Enhanced click-to-place functionality with better validation (Requirements 3.2, 3.3, 3.4)
+        placeAccessoryAtClick: function (event) {
+            console.log('🖱️ Click detected for accessory placement');
+
+            if (!this.config.placementMode || !this.config.placementMode.active) return;
+
+            const intersectionData = this.getIntersectionPoint(event);
+            if (!intersectionData || !intersectionData.point) {
+                console.log('❌ No intersection with pegboard');
+                this.showError('Please click on the pegboard surface');
+                return;
+            }
+
+            // Snap to grid with enhanced validation
+            const snappedPosition = this.snapToGrid(intersectionData.point);
+            
+            // Check if snapping was successful
+            if (!snappedPosition) {
+                console.log('❌ No valid peg hole found near click position');
+                this.showError('Please click closer to a peg hole');
+                return;
+            }
+
+            // Get actual dimensions from model
+            const dimensions = this.config.modules.models.getModelDimensions(this.config.placementMode.model);
+
+            // Enhanced validation with specific error messages
+            if (!this.isValidGridPosition(snappedPosition, dimensions)) {
+                // Provide specific error message based on validation failure
+                const errorMessage = this.getPlacementErrorMessage(snappedPosition, dimensions);
+                this.showError(errorMessage);
+                return;
+            }
+
+            // Create final model
+            const model = this.config.placementMode.model.clone();
+            
+            // Position accessory on the front face of the pegboard
+            model.position.copy(snappedPosition);
+            
+            // Apply accessory-specific positioning and orientation
+            this.applyAccessoryPositioning(model, this.config.placementMode.accessoryData);
+            
+            console.log('🔧 Accessory positioned:', {
+                name: this.config.placementMode.accessoryData.name,
+                position: snappedPosition,
+                frontFaceZ: this.config.gridSystem.frontFaceZ,
+                finalPosition: model.position,
+                rotation: model.rotation,
+                dimensions: dimensions
+            });
+
+            // Add to scene
+            this.config.modules.core.addToScene(model);
+
+            // Create accessory data with enhanced information
+            const placementId = 'accessory_' + Date.now();
+            const accessoryData = {
+                placementId: placementId,
+                id: this.config.placementMode.accessoryData.id,
+                name: this.config.placementMode.accessoryData.name,
+                model: model,
+                position: snappedPosition,
+                dimensions: dimensions,
+                placedAt: new Date().toISOString()
+            };
+
+            // Trigger placement event
+            const jQuery = window.jQuery || window.$;
+            if (jQuery) {
+                jQuery(document).trigger('accessoryPlaced', [accessoryData]);
+            }
+
+            // Exit placement mode
+            this.exitPlacementMode();
+
+            console.log('✅ Accessory placed successfully');
+            this.showSuccess(`${this.config.placementMode.accessoryData.name} placed successfully`);
+        },
+
+        // Enhanced exit placement mode with proper cleanup
+        exitPlacementMode: function () {
+            if (!this.config.placementMode) return;
+
+            // Clean up preview model and animations
+            if (this.config.placementMode.previewModel) {
+                // Clear any pulse animations
+                if (this.config.placementMode.previewModel.userData.pulseAnimation) {
+                    clearInterval(this.config.placementMode.previewModel.userData.pulseAnimation);
+                }
+                
+                // Remove from scene
+                this.config.modules.core.removeFromScene(this.config.placementMode.previewModel);
+            }
+
+            // Reset cursor
+            const canvas = this.config.modules.core.config.renderer.domElement;
+            canvas.style.cursor = 'default';
+
+            // Remove event listeners
+            canvas.removeEventListener('mousemove', this.updatePlacementPreview);
+            canvas.removeEventListener('click', this.placeAccessoryAtClick);
+
+            // Clear placement mode
+            this.config.placementMode = null;
+
+            console.log('🚪 Exited placement mode');
+        },
+
+        // Remove accessory (Enhanced for Requirements 3.4, 3.5)
+        removeAccessory: function (placementId) {
+            const index = this.config.placedAccessories.findIndex(a => a.placementId === placementId);
+            if (index !== -1) {
+                const accessory = this.config.placedAccessories[index];
+
+                // Remove from scene
+                if (accessory.model) {
+                    this.config.modules.core.removeFromScene(accessory.model);
+                    
+                    // Dispose of model resources
+                    this.disposeAccessoryModel(accessory.model);
+                }
+
+                // Remove from array
+                this.config.placedAccessories.splice(index, 1);
+
+                // Update UI
+                if (this.config.modules.ui && this.config.modules.ui.updatePlacedAccessoriesDisplay) {
+                    this.config.modules.ui.updatePlacedAccessoriesDisplay();
+                }
+
+                // Trigger configuration change event for price updates
+                const jQuery = window.jQuery || window.$;
+                if (jQuery) {
+                    jQuery(document).trigger('configurationChanged');
+                }
+
+                console.log('🗑️ Accessory removed:', accessory.name);
+                this.showSuccess(`${accessory.name} removed successfully`);
+            }
+        },
+
+        // Enable accessory repositioning mode (Requirement 3.5)
+        enableAccessoryRepositioning: function (placementId) {
+            console.log('🔄 Enabling repositioning mode for:', placementId);
+
+            const accessory = this.config.placedAccessories.find(a => a.placementId === placementId);
+            if (!accessory) {
+                console.error('❌ Accessory not found for repositioning:', placementId);
+                return;
+            }
+
+            // Exit any existing placement mode
+            this.exitPlacementMode();
+
+            // Set up repositioning mode
+            this.config.repositionMode = {
+                active: true,
+                placementId: placementId,
+                accessoryData: accessory,
+                originalPosition: accessory.position.clone(),
+                previewModel: null
+            };
+
+            // Create preview model for repositioning
+            const previewModel = accessory.model.clone();
+            previewModel.traverse(child => {
+                if (child.material) {
+                    child.material = child.material.clone();
+                    child.material.transparent = true;
+                    child.material.opacity = 0.7;
+                    child.material.color.setHex(0xffa500); // Orange color for repositioning
+                }
+            });
+
+            this.config.repositionMode.previewModel = previewModel;
+            this.config.modules.core.addToScene(previewModel);
+
+            // Hide original model during repositioning
+            accessory.model.visible = false;
+
+            // Enable repositioning UI and interactions
+            this.enableRepositioningMode();
+
+            console.log('✅ Repositioning mode enabled for:', accessory.name);
+        },
+
+        // Enable repositioning mode UI and interactions
+        enableRepositioningMode: function () {
+            const self = this;
+
+            // Bind mouse events for repositioning
+            const canvas = this.config.modules.core.config.renderer.domElement;
+
+            const mouseMoveHandler = function (event) {
+                self.updateRepositionPreview(event);
+            };
+
+            const clickHandler = function (event) {
+                self.repositionAccessoryAtClick(event);
+            };
+
+            const keyHandler = function (event) {
+                if (event.key === 'Escape') {
+                    self.cancelRepositioning();
+                }
+            };
+
+            // Store handlers for cleanup
+            this.config.repositionMode.mouseMoveHandler = mouseMoveHandler;
+            this.config.repositionMode.clickHandler = clickHandler;
+            this.config.repositionMode.keyHandler = keyHandler;
+
+            canvas.addEventListener('mousemove', mouseMoveHandler);
+            canvas.addEventListener('click', clickHandler);
+            document.addEventListener('keydown', keyHandler);
+
+            // Update cursor
+            canvas.style.cursor = 'move';
+
+            // Show repositioning instructions
+            this.showRepositioningInstructions();
+
+            console.log('✅ Repositioning mode UI enabled');
+        },
+
+        // Update repositioning preview
+        updateRepositionPreview: function (event) {
+            if (!this.config.repositionMode || !this.config.repositionMode.active) return;
+
+            const intersectionData = this.getIntersectionPoint(event);
+            if (!intersectionData || !intersectionData.point) {
+                // Hide preview when not over pegboard
+                if (this.config.repositionMode.previewModel) {
+                    this.config.repositionMode.previewModel.visible = false;
+                }
+                this.updateSceneValidityState(null);
+                return;
+            }
+
+            // Show preview model
+            const previewModel = this.config.repositionMode.previewModel;
+            previewModel.visible = true;
+
+            // Snap to grid
+            const snappedPosition = this.snapToGrid(intersectionData.point);
+            
+            if (!snappedPosition) {
+                previewModel.visible = false;
+                this.updateSceneValidityState(false);
+                return;
+            }
+
+            previewModel.position.copy(snappedPosition);
+            
+            // Apply accessory positioning
+            this.applyAccessoryPositioning(previewModel, this.config.repositionMode.accessoryData);
+
+            // Check if position is valid (excluding current accessory from collision check)
+            const dimensions = this.config.modules.models.getModelDimensions(this.config.repositionMode.accessoryData.model);
+            const isValid = this.isValidRepositionPosition(snappedPosition, dimensions, this.config.repositionMode.placementId);
+
+            // Update preview color
+            this.updateRepositionPreviewColor(previewModel, isValid);
+            
+            // Update scene validity state
+            this.updateSceneValidityState(isValid);
+            
+            // Update cursor based on validity
+            const canvas = this.config.modules.core.config.renderer.domElement;
+            canvas.style.cursor = isValid ? 'move' : 'not-allowed';
+        },
+
+        // Check if repositioning position is valid
+        isValidRepositionPosition: function (position, dimensions, excludePlacementId) {
+            if (!this.config.gridSystem || !position) {
                 return false;
             }
 
             const grid = this.config.gridSystem;
-            const snappedPos = this.snapToGrid(position);
-
-            // Check if position is on a valid peg hole
-            const pegHole = this.findPegHoleAtPosition(snappedPos);
-            if (!pegHole) {
-                console.log('❌ Validation failed: No peg hole at position', snappedPos);
-                return false;
-            }
-
-            // Check bounds
             const halfWidth = grid.width / 2;
             const halfHeight = grid.height / 2;
 
+            // Check bounds
             const accessoryWidth = dimensions.width || 0.05;
             const accessoryHeight = dimensions.height || 0.05;
 
             const bounds = {
-                minX: snappedPos.x - accessoryWidth / 2,
-                maxX: snappedPos.x + accessoryWidth / 2,
-                minY: snappedPos.y - accessoryHeight / 2,
-                maxY: snappedPos.y + accessoryHeight / 2,
-                gridMinX: -halfWidth,
-                gridMaxX: halfWidth,
-                gridMinY: -halfHeight,
-                gridMaxY: halfHeight
+                minX: position.x - accessoryWidth / 2,
+                maxX: position.x + accessoryWidth / 2,
+                minY: position.y - accessoryHeight / 2,
+                maxY: position.y + accessoryHeight / 2
             };
 
-            if (bounds.minX < bounds.gridMinX || bounds.maxX > bounds.gridMaxX ||
-                bounds.minY < bounds.gridMinY || bounds.maxY > bounds.gridMaxY) {
-                console.log('❌ Validation failed: Out of bounds', bounds);
+            if (bounds.minX < -halfWidth || bounds.maxX > halfWidth ||
+                bounds.minY < -halfHeight || bounds.maxY > halfHeight) {
                 return false;
             }
 
-            // Check for overlaps with placed accessories using bounding box collision
-            const hasOverlap = this.checkAccessoryOverlap(snappedPos, dimensions);
-            if (hasOverlap) {
-                console.log('❌ Validation failed: Overlap detected');
+            // Verify position is on a valid peg hole
+            if (!this.isPositionOnPegHole(position)) {
+                return false;
             }
 
-            return !hasOverlap;
+            // Check for overlaps with other accessories (excluding the one being repositioned)
+            const hasOverlap = this.checkAccessoryOverlap(position, dimensions, excludePlacementId);
+            if (hasOverlap) {
+                return false;
+            }
+
+            return true;
         },
 
-        // Check for accessory overlap with 2cm margin
-        // Requirements: 3.4
-        checkAccessoryOverlap: function (position, dimensions, excludePlacementId) {
+        // Reposition accessory at click location
+        repositionAccessoryAtClick: function (event) {
+            console.log('🖱️ Click detected for accessory repositioning');
+
+            if (!this.config.repositionMode || !this.config.repositionMode.active) return;
+
+            const intersectionData = this.getIntersectionPoint(event);
+            if (!intersectionData || !intersectionData.point) {
+                console.log('❌ No intersection with pegboard');
+                this.showError('Please click on the pegboard surface');
+                return;
+            }
+
+            // Snap to grid
+            const snappedPosition = this.snapToGrid(intersectionData.point);
+            
+            if (!snappedPosition) {
+                console.log('❌ No valid peg hole found near click position');
+                this.showError('Please click closer to a peg hole');
+                return;
+            }
+
+            // Get dimensions
+            const dimensions = this.config.modules.models.getModelDimensions(this.config.repositionMode.accessoryData.model);
+
+            // Validate position
+            if (!this.isValidRepositionPosition(snappedPosition, dimensions, this.config.repositionMode.placementId)) {
+                const errorMessage = this.getPlacementErrorMessage(snappedPosition, dimensions);
+                this.showError(errorMessage);
+                return;
+            }
+
+            // Update accessory position
+            const accessory = this.config.repositionMode.accessoryData;
+            accessory.position.copy(snappedPosition);
+            accessory.model.position.copy(snappedPosition);
+            
+            // Apply positioning
+            this.applyAccessoryPositioning(accessory.model, accessory);
+
+            // Show original model
+            accessory.model.visible = true;
+
+            console.log('✅ Accessory repositioned successfully:', {
+                name: accessory.name,
+                newPosition: snappedPosition
+            });
+
+            // Exit repositioning mode
+            this.exitRepositioningMode();
+
+            this.showSuccess(`${accessory.name} repositioned successfully`);
+        },
+
+        // Cancel repositioning
+        cancelRepositioning: function () {
+            if (!this.config.repositionMode) return;
+
+            console.log('🚫 Cancelling accessory repositioning');
+
+            // Show original model
+            const accessory = this.config.repositionMode.accessoryData;
+            if (accessory && accessory.model) {
+                accessory.model.visible = true;
+            }
+
+            // Exit repositioning mode
+            this.exitRepositioningMode();
+
+            this.showSuccess('Repositioning cancelled');
+        },
+
+        // Exit repositioning mode
+        exitRepositioningMode: function () {
+            if (!this.config.repositionMode) return;
+
+            // Clean up preview model
+            if (this.config.repositionMode.previewModel) {
+                this.config.modules.core.removeFromScene(this.config.repositionMode.previewModel);
+                this.disposeAccessoryModel(this.config.repositionMode.previewModel);
+            }
+
+            // Remove event listeners
+            const canvas = this.config.modules.core.config.renderer.domElement;
+            if (this.config.repositionMode.mouseMoveHandler) {
+                canvas.removeEventListener('mousemove', this.config.repositionMode.mouseMoveHandler);
+            }
+            if (this.config.repositionMode.clickHandler) {
+                canvas.removeEventListener('click', this.config.repositionMode.clickHandler);
+            }
+            if (this.config.repositionMode.keyHandler) {
+                document.removeEventListener('keydown', this.config.repositionMode.keyHandler);
+            }
+
+            // Reset cursor
+            canvas.style.cursor = 'default';
+
+            // Hide instructions
+            this.hideRepositioningInstructions();
+
+            // Clear repositioning mode
+            this.config.repositionMode = null;
+
+            console.log('🚪 Exited repositioning mode');
+        },
+
+        // Show repositioning instructions
+        showRepositioningInstructions: function () {
+            const accessoryName = this.config.repositionMode.accessoryData.name;
+            const instructionsHtml = `
+                <div class="repositioning-instructions" id="repositioning-instructions">
+                    <div class="instruction-content">
+                        <span class="instruction-icon">🔄</span>
+                        <span class="instruction-text">Click on the pegboard to move "${accessoryName}" or press Escape to cancel</span>
+                        <button class="cancel-repositioning-btn" type="button">Cancel</button>
+                    </div>
+                </div>
+            `;
+            
+            // Remove existing instructions
+            $('#repositioning-instructions').remove();
+            
+            // Add new instructions
+            $('.configurator-scene').append(instructionsHtml);
+            
+            // Bind cancel button
+            $('.cancel-repositioning-btn').on('click', () => {
+                this.cancelRepositioning();
+            });
+        },
+
+        // Hide repositioning instructions
+        hideRepositioningInstructions: function () {
+            $('#repositioning-instructions').remove();
+        },
+
+        // Update repositioning preview color
+        updateRepositionPreviewColor: function (model, isValid) {
+            const color = isValid ? 0xffa500 : 0xdc3545; // Orange for valid, red for invalid
+            const opacity = isValid ? 0.7 : 0.5;
+
+            model.traverse(child => {
+                if (child.material) {
+                    child.material.color.setHex(color);
+                    child.material.transparent = true;
+                    child.material.opacity = opacity;
+                    
+                    if (child.material.emissive) {
+                        child.material.emissive.setHex(isValid ? 0x4d2600 : 0x4d0a0a);
+                        child.material.emissiveIntensity = 0.2;
+                    }
+                }
+            });
+        },
+
+        // Dispose accessory model resources
+        disposeAccessoryModel: function (model) {
+            if (!model) return;
+
+            model.traverse(child => {
+                if (child.geometry) {
+                    child.geometry.dispose();
+                }
+                if (child.material) {
+                    if (Array.isArray(child.material)) {
+                        child.material.forEach(material => {
+                            if (material.map) material.map.dispose();
+                            if (material.normalMap) material.normalMap.dispose();
+                            if (material.roughnessMap) material.roughnessMap.dispose();
+                            if (material.metalnessMap) material.metalnessMap.dispose();
+                            material.dispose();
+                        });
+                    } else {
+                        if (child.material.map) child.material.map.dispose();
+                        if (child.material.normalMap) child.material.normalMap.dispose();
+                        if (child.material.roughnessMap) child.material.roughnessMap.dispose();
+                        if (child.material.metalnessMap) child.material.metalnessMap.dispose();
+                        child.material.dispose();
+                    }
+                }
+            });
+        },
+
+        // Reset entire configuration (Enhanced for Requirements 3.4, 3.5)
+        resetConfiguration: function () {
+            // Exit any active modes first
+            this.exitPlacementMode();
+            this.exitRepositioningMode();
+
+            // Clear pegboard
+            if (this.config.currentPegboardModel) {
+                this.config.modules.core.removeFromScene(this.config.currentPegboardModel);
+                this.config.currentPegboardModel = null;
+            }
+            this.config.currentPegboard = null;
+
+            // Clear accessories with proper disposal
+            this.config.placedAccessories.forEach(accessory => {
+                if (accessory.model) {
+                    this.config.modules.core.removeFromScene(accessory.model);
+                    this.disposeAccessoryModel(accessory.model);
+                }
+            });
+            this.config.placedAccessories = [];
+
+            // Clear grid system
+            this.config.gridSystem = null;
+
+            // Sync with UI module
+            if (this.config.modules.ui && this.config.modules.ui.syncPlacedAccessories) {
+                this.config.modules.ui.syncPlacedAccessories([]);
+            }
+
+            console.log('🔄 Configuration reset complete');
+        },
+
+        // Snap position to nearest peg hole on the front face (Enhanced for Requirements 3.2, 3.3)
+        snapToGrid: function (position) {
+            if (!this.config.gridSystem || !this.config.gridSystem.enabled) {
+                return position.clone();
+            }
+
+            const pegHoles = this.config.gridSystem.pegHoles;
+            let closestHole = null;
+            let minDistance = Infinity;
+            const maxSnapDistance = this.config.gridSystem.pegHoleSpacing * 1.5; // Maximum snap distance
+
+            // Find the closest peg hole based on X and Y coordinates only
+            pegHoles.forEach(hole => {
+                const distance = Math.sqrt(
+                    Math.pow(position.x - hole.x, 2) +
+                    Math.pow(position.y - hole.y, 2)
+                );
+
+                // Only snap if within reasonable distance to prevent snapping to far holes
+                if (distance < minDistance && distance <= maxSnapDistance) {
+                    minDistance = distance;
+                    closestHole = hole;
+                }
+            });
+
+            if (closestHole) {
+                // Always use the front face Z position for accessories
+                const snappedPosition = new THREE.Vector3(
+                    closestHole.x, 
+                    closestHole.y, 
+                    this.config.gridSystem.frontFaceZ
+                );
+                
+                console.log('📍 Snapped to grid:', {
+                    original: { x: position.x, y: position.y, z: position.z },
+                    snapped: { x: snappedPosition.x, y: snappedPosition.y, z: snappedPosition.z },
+                    frontFaceZ: this.config.gridSystem.frontFaceZ,
+                    snapDistance: minDistance,
+                    maxSnapDistance: maxSnapDistance
+                });
+                
+                return snappedPosition;
+            }
+
+            // If no valid snap point found, return null to indicate invalid placement
+            console.log('⚠️ No valid snap point found for position:', position);
+            return null;
+        },
+
+        // Check if position is valid for placement (Enhanced for Requirements 3.2, 3.3, 3.4)
+        isValidGridPosition: function (position, dimensions) {
+            if (!this.config.gridSystem || !position) {
+                console.log('❌ Invalid grid system or position');
+                return false;
+            }
+
+            const grid = this.config.gridSystem;
+            const halfWidth = grid.width / 2;
+            const halfHeight = grid.height / 2;
+
+            // Enhanced bounds checking with better error reporting
+            const accessoryWidth = dimensions.width || 0.05;
+            const accessoryHeight = dimensions.height || 0.05;
+
+            const bounds = {
+                minX: position.x - accessoryWidth / 2,
+                maxX: position.x + accessoryWidth / 2,
+                minY: position.y - accessoryHeight / 2,
+                maxY: position.y + accessoryHeight / 2
+            };
+
+            // Check if accessory fits within pegboard bounds
+            if (bounds.minX < -halfWidth || bounds.maxX > halfWidth ||
+                bounds.minY < -halfHeight || bounds.maxY > halfHeight) {
+                console.log('❌ Accessory exceeds pegboard bounds:', {
+                    bounds: bounds,
+                    pegboardLimits: { width: grid.width, height: grid.height }
+                });
+                return false;
+            }
+
+            // Verify position is on a valid peg hole
+            if (!this.isPositionOnPegHole(position)) {
+                console.log('❌ Position is not on a valid peg hole');
+                return false;
+            }
+
+            // Check for overlaps with existing accessories
+            const hasOverlap = this.checkAccessoryOverlap(position, dimensions);
+            if (hasOverlap) {
+                console.log('❌ Position overlaps with existing accessory');
+                return false;
+            }
+
+            console.log('✅ Position is valid for placement');
+            return true;
+        },
+
+        // Check if position is on a valid peg hole (Requirement 3.3)
+        isPositionOnPegHole: function (position) {
+            if (!this.config.gridSystem || !this.config.gridSystem.pegHoles) {
+                return false;
+            }
+
+            const tolerance = 0.001; // 1mm tolerance for floating point precision
+            
+            // Check if position matches any peg hole exactly (within tolerance)
+            return this.config.gridSystem.pegHoles.some(hole => {
+                const distance = Math.sqrt(
+                    Math.pow(position.x - hole.x, 2) +
+                    Math.pow(position.y - hole.y, 2) +
+                    Math.pow(position.z - hole.z, 2)
+                );
+                return distance <= tolerance;
+            });
+        },
+
+        // Enhanced collision detection to prevent overlaps (Requirement 3.4)
+        checkAccessoryOverlap: function (position, dimensions, excludePlacementId = null) {
             if (!this.config.placedAccessories || this.config.placedAccessories.length === 0) {
                 return false;
             }
@@ -1669,7 +1126,6 @@
             const newWidth = (dimensions.width || 0.05) + margin;
             const newHeight = (dimensions.height || 0.05) + margin;
 
-            // Create bounding box for new accessory
             const newBox = {
                 minX: position.x - newWidth / 2,
                 maxX: position.x + newWidth / 2,
@@ -1677,36 +1133,16 @@
                 maxY: position.y + newHeight / 2
             };
 
-            console.log('🔍 Checking overlap for new accessory:', {
-                position: position,
-                dimensions: dimensions,
-                newBox: newBox,
-                placedAccessoriesCount: this.config.placedAccessories.length
-            });
-
-            // Check against all placed accessories
-            for (let i = 0; i < this.config.placedAccessories.length; i++) {
-                const accessory = this.config.placedAccessories[i];
-
-                // Skip if this is the accessory being repositioned
+            for (let accessory of this.config.placedAccessories) {
+                // Skip if this is the same accessory being repositioned
                 if (excludePlacementId && accessory.placementId === excludePlacementId) {
                     continue;
                 }
 
-                // Use stored dimensions (which are already calculated from model)
-                let actualWidth = accessory.dimensions.width || 0.05;
-                let actualHeight = accessory.dimensions.height || 0.05;
+                const existingDimensions = accessory.dimensions;
+                const existingWidth = (existingDimensions.width || 0.05) + margin;
+                const existingHeight = (existingDimensions.height || 0.05) + margin;
 
-                console.log('🔍 Placed accessory #' + i + ' dimensions:', {
-                    name: accessory.name,
-                    dimensions: accessory.dimensions,
-                    position: accessory.position
-                });
-
-                const existingWidth = actualWidth + margin;
-                const existingHeight = actualHeight + margin;
-
-                // Create bounding box for existing accessory
                 const existingBox = {
                     minX: accessory.position.x - existingWidth / 2,
                     maxX: accessory.position.x + existingWidth / 2,
@@ -1714,1588 +1150,319 @@
                     maxY: accessory.position.y + existingHeight / 2
                 };
 
-                console.log('🔍 Comparing with placed accessory #' + i + ':', {
-                    name: accessory.name,
-                    existingBox: existingBox,
-                    newBox: newBox
-                });
+                // Enhanced overlap detection with detailed logging
+                const hasOverlap = !(newBox.maxX < existingBox.minX || newBox.minX > existingBox.maxX ||
+                    newBox.maxY < existingBox.minY || newBox.minY > existingBox.maxY);
 
-                // Check for overlap
-                const overlaps = !(newBox.maxX < existingBox.minX ||
-                    newBox.minX > existingBox.maxX ||
-                    newBox.maxY < existingBox.minY ||
-                    newBox.minY > existingBox.maxY);
-
-                if (overlaps) {
-                    console.log('❌ OVERLAP DETECTED with accessory #' + i + ':', {
-                        name: accessory.name,
-                        existingBox: existingBox,
+                if (hasOverlap) {
+                    console.log('🚫 Collision detected:', {
+                        newAccessory: { position: position, dimensions: dimensions },
+                        existingAccessory: { 
+                            name: accessory.name, 
+                            position: accessory.position, 
+                            dimensions: existingDimensions 
+                        },
                         newBox: newBox,
-                        xOverlap: !(newBox.maxX < existingBox.minX || newBox.minX > existingBox.maxX),
-                        yOverlap: !(newBox.maxY < existingBox.minY || newBox.minY > existingBox.maxY)
+                        existingBox: existingBox
                     });
-                    return true; // Overlap detected
+                    return true;
                 }
             }
 
-            console.log('✅ No overlap detected');
-            return false; // No overlap
+            return false;
         },
 
-        // Get model dimensions in local space (unaffected by rotation/position)
-        // Requirements: 3.4
-        getModelDimensions: function (model) {
-            if (!model) {
-                return { width: 0.05, height: 0.05, depth: 0.05 };
-            }
-
-            // Calculate bounding box from geometry in local space
-            const bbox = new THREE.Box3();
-            
-            model.traverse(function (child) {
-                if (child.isMesh && child.geometry) {
-                    // Get geometry bounding box (local space, no transformations)
-                    if (!child.geometry.boundingBox) {
-                        child.geometry.computeBoundingBox();
-                    }
-                    
-                    const geomBox = child.geometry.boundingBox.clone();
-                    
-                    // Apply only the scale (not rotation or position)
-                    geomBox.min.multiply(child.scale);
-                    geomBox.max.multiply(child.scale);
-                    
-                    // Apply parent scale if exists
-                    if (model.scale) {
-                        geomBox.min.multiply(model.scale);
-                        geomBox.max.multiply(model.scale);
-                    }
-                    
-                    bbox.union(geomBox);
-                }
-            });
-
-            const size = new THREE.Vector3();
-            bbox.getSize(size);
-
-            // Return absolute values (in case of negative scales)
-            return {
-                width: Math.abs(size.x),
-                height: Math.abs(size.y),
-                depth: Math.abs(size.z)
-            };
-        },
-
-        // Orient accessory model to face pegboard correctly
-        // Requirements: 3.2
-        orientAccessoryModel: function (model, intersectionData) {
-            if (!model || !intersectionData) {
-                return;
-            }
-
-            // Get surface normal from intersection
-            const normal = intersectionData.face ? intersectionData.face.normal.clone() : new THREE.Vector3(0, 0, 1);
-
-            // Transform normal to world space
-            if (intersectionData.object) {
-                normal.transformDirection(intersectionData.object.matrixWorld);
-            }
-
-            // Ensure accessory faces outward from pegboard
-            // Pegboard typically faces +Z direction, accessories should face same direction
-            const targetNormal = new THREE.Vector3(0, 0, 1);
-
-            // Calculate rotation to align accessory with pegboard surface
-            const quaternion = new THREE.Quaternion();
-            quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, -1), targetNormal);
-
-            model.quaternion.copy(quaternion);
-
-            // Ensure accessory is upright (Y-axis points up)
-            const up = new THREE.Vector3(0, 1, 0);
-            up.applyQuaternion(model.quaternion);
-
-            // If accessory is tilted, correct it
-            if (Math.abs(up.y) < 0.9) {
-                // Reset to upright orientation
-                model.rotation.set(0, 0, 0);
-            }
-
-            // Apply 180 degree horizontal rotation (flip to face correct direction)
-            model.rotation.y += Math.PI;
-
-            console.log('Accessory oriented with normal:', normal, 'rotation:', model.rotation);
-        },
-
-        // Select an accessory for placement
-        // Requirements: 2.3 (display accessory model), 3.2 (click-to-place)
-        selectAccessory: function (accessoryId) {
-            console.log('Selecting accessory for placement:', accessoryId);
-            const self = this;
-
-            // Get accessory data from the UI element
-            const accessoryElement = $('.accessory-item[data-product-id="' + accessoryId + '"]');
-            const dimensionsData = accessoryElement.data('dimensions') || {};
-
-            const accessoryData = {
-                id: accessoryId,
-                name: accessoryElement.find('.product-name').text(),
-                price: accessoryElement.data('price') || 0,
-                model_url: accessoryElement.data('model-url') || '',
-                dimensions: dimensionsData
-            };
-
-            // Check if pegboard is selected
-            if (!this.config.currentPegboard) {
-                this.showError('Please select a pegboard first');
-                return;
-            }
-
-            // Check if grid system is initialized
-            if (!this.config.gridSystem) {
-                this.showError('Grid system not initialized. Please select a pegboard first.');
-                return;
-            }
-
-            // Load 3D model if URL is provided
-            if (accessoryData.model_url) {
-                console.log('Loading accessory 3D model:', accessoryData.model_url);
-
-                this.loadModel(accessoryData.model_url, 'accessory-' + accessoryId)
-                    .then(function (model) {
-                        console.log('Accessory model loaded successfully');
-
-                        // Log accessory size before any modifications
-                        const bbox = new THREE.Box3().setFromObject(model);
-                        const size = new THREE.Vector3();
-                        bbox.getSize(size);
-                        console.log('🔧 Accessory original size:', {
-                            x: size.x,
-                            y: size.y,
-                            z: size.z,
-                            scale: model.scale
-                        });
-
-                        // Check if accessory needs scaling (same logic as pegboard)
-                        const maxDim = Math.max(size.x, size.y, size.z);
-                        if (maxDim > 10) {
-                            const scale = 0.01;
-                            model.scale.set(scale, scale, scale);
-                            model.updateMatrix();
-                            model.updateMatrixWorld(true);
-
-                            const newBbox = new THREE.Box3().setFromObject(model);
-                            newBbox.getSize(size);
-                            console.log('🔧 Accessory scaled from cm to m. New size:', {
-                                x: size.x.toFixed(3) + 'm',
-                                y: size.y.toFixed(3) + 'm',
-                                z: size.z.toFixed(3) + 'm'
-                            });
-                        }
-
-                        // Rotate accessory 180 degrees around Y axis (horizontal flip)
-                        model.rotation.y = Math.PI; // 180 degrees
-                        model.updateMatrix();
-                        model.updateMatrixWorld(true);
-
-                        // Log bounding box info to understand model pivot/center
-                        const rotatedBbox = new THREE.Box3().setFromObject(model);
-                        const center = new THREE.Vector3();
-                        rotatedBbox.getCenter(center);
-                        console.log('🔄 Rotated accessory 180° horizontally');
-                        console.log('🔧 Model center after rotation:', center);
-                        console.log('🔧 Model position:', model.position);
-
-                        // Store accessory data for placement mode
-                        self.config.placementMode = {
-                            active: true,
-                            accessoryData: accessoryData,
-                            model: model,
-                            previewModel: null
-                        };
-
-                        // Create preview model (semi-transparent)
-                        const previewModel = model.clone();
-                        previewModel.visible = true; // Ensure it's visible
-                        self.makeModelTransparent(previewModel, 0.5);
-                        self.config.placementMode.previewModel = previewModel;
-
-                        // Add preview to scene
-                        self.config.scene.add(previewModel);
-                        console.log('🔧 Preview model added to scene, visible:', previewModel.visible);
-
-                        // Enable placement mode UI
-                        self.enablePlacementMode();
-
-                        // Show instruction message
-                        self.showMessage('Click on the pegboard to place the accessory. Press ESC to cancel.', 'info');
-
-                        console.log('✅ Placement mode activated. Accessory size:', size);
-                    })
-                    .catch(function (error) {
-                        console.error('Failed to load accessory model:', error);
-                        self.showError('Failed to load 3D model for this accessory');
-                    });
-            } else {
-                console.warn('No model URL provided for accessory');
-                this.showError('This accessory does not have a 3D model configured');
-            }
-        },
-
-        // Make model transparent for preview
-        // Requirements: 3.2
-        makeModelTransparent: function (model, opacity) {
-            model.traverse(function (child) {
-                if (child.isMesh && child.material) {
-                    // Clone material to avoid affecting cached model
-                    if (Array.isArray(child.material)) {
-                        child.material = child.material.map(function (mat) {
-                            const newMat = mat.clone();
-                            newMat.transparent = true;
-                            newMat.opacity = opacity;
-                            newMat.depthWrite = false;
-                            return newMat;
-                        });
-                    } else {
-                        child.material = child.material.clone();
-                        child.material.transparent = true;
-                        child.material.opacity = opacity;
-                        child.material.depthWrite = false;
-                    }
-                }
-            });
-        },
-
-        // Enable placement mode UI and event listeners
-        // Requirements: 3.2
-        enablePlacementMode: function () {
-            const self = this;
-
-            // Add placement mode class to container
-            $('.blasti-configurator-container').addClass('placement-mode');
-
-            // Change cursor
-            if (this.config.renderer && this.config.renderer.domElement) {
-                this.config.renderer.domElement.style.cursor = 'crosshair';
-            }
-
-            // Setup mouse move listener for preview
-            this.config.placementMouseMoveHandler = function (event) {
-                self.updatePlacementPreview(event);
-            };
-
-            // Setup click listener for placement
-            this.config.placementClickHandler = function (event) {
-                self.placeAccessoryAtClick(event);
-            };
-
-            // Setup keyboard listener for cancellation
-            this.config.placementKeyHandler = function (event) {
-                if (event.key === 'Escape' || event.keyCode === 27) {
-                    self.cancelPlacementMode();
-                }
-            };
-
-            // Attach event listeners
-            if (this.config.renderer && this.config.renderer.domElement) {
-                this.config.renderer.domElement.addEventListener('mousemove', this.config.placementMouseMoveHandler);
-                this.config.renderer.domElement.addEventListener('click', this.config.placementClickHandler);
-            }
-            document.addEventListener('keydown', this.config.placementKeyHandler);
-
-            console.log('Placement mode UI enabled');
-        },
-
-        // Disable placement mode
-        // Requirements: 3.2
-        disablePlacementMode: function () {
-            // Remove placement mode class
-            $('.blasti-configurator-container').removeClass('placement-mode');
-
-            // Reset cursor
-            if (this.config.renderer && this.config.renderer.domElement) {
-                this.config.renderer.domElement.style.cursor = 'default';
-            }
-
-            // Remove event listeners
-            if (this.config.renderer && this.config.renderer.domElement) {
-                if (this.config.placementMouseMoveHandler) {
-                    this.config.renderer.domElement.removeEventListener('mousemove', this.config.placementMouseMoveHandler);
-                }
-                if (this.config.placementClickHandler) {
-                    this.config.renderer.domElement.removeEventListener('click', this.config.placementClickHandler);
-                }
-            }
-            if (this.config.placementKeyHandler) {
-                document.removeEventListener('keydown', this.config.placementKeyHandler);
-            }
-
-            // Remove preview model from scene
-            if (this.config.placementMode && this.config.placementMode.previewModel) {
-                this.config.scene.remove(this.config.placementMode.previewModel);
-            }
-
-            // Clear placement mode data
-            this.config.placementMode = null;
-
-            console.log('Placement mode disabled');
-        },
-
-        // Cancel placement mode
-        // Requirements: 3.2
-        cancelPlacementMode: function () {
-            console.log('Cancelling placement mode');
-            this.disablePlacementMode();
-            this.showMessage('Placement cancelled', 'info');
-        },
-
-        // Update placement preview as mouse moves
-        // Requirements: 3.2, 3.3 (grid snapping)
-        updatePlacementPreview: function (event) {
-            if (!this.config.placementMode || !this.config.placementMode.active) {
-                console.log('⚠️ updatePlacementPreview called but placement mode not active');
-                return;
-            }
-
-            const intersectionData = this.getIntersectionPoint(event);
-            console.log('🎯 Mouse move - intersection:', intersectionData ? 'found' : 'none');
-
-            if (intersectionData && intersectionData.point) {
-                // Snap to nearest peg hole
-                const snappedPosition = this.snapToGrid(intersectionData.point);
-
-                // Update preview model position and orientation
-                if (this.config.placementMode.previewModel) {
-                    this.config.placementMode.previewModel.visible = true; // Make sure it's visible
-
-                    // Calculate depth offset so back of accessory touches pegboard
-                    const bbox = new THREE.Box3().setFromObject(this.config.placementMode.previewModel);
-                    const size = new THREE.Vector3();
-                    bbox.getSize(size);
-                    const depthOffset = size.z / 2;
-
-                    this.config.placementMode.previewModel.position.set(
-                        snappedPosition.x,
-                        snappedPosition.y,
-                        snappedPosition.z + depthOffset - 0.001 // Back against pegboard, extends toward camera
-                    );
-
-                    // Orient accessory to face correctly
-                    this.orientAccessoryModel(this.config.placementMode.previewModel, intersectionData);
-
-                    // Get actual dimensions from the BASE model (before transformations)
-                    // This gives us the true size without rotation/position affecting the bounding box
-                    const actualDimensions = this.getModelDimensions(this.config.placementMode.model);
-
-                    // Check if position is valid (no collision)
-                    const isValid = this.isValidGridPosition(snappedPosition, actualDimensions);
-
-                    console.log('🎯 Validation check:', {
-                        position: snappedPosition,
-                        metadataDimensions: this.config.placementMode.accessoryData.dimensions,
-                        actualDimensions: actualDimensions,
-                        isValid: isValid
-                    });
-
-                    // Change preview color based on validity
-                    this.updatePreviewColor(this.config.placementMode.previewModel, isValid);
-
-                    // Store validation state for click handler
-                    this.config.placementMode.lastValidState = isValid;
-                    this.config.placementMode.lastPosition = snappedPosition;
-                    this.config.placementMode.lastIntersectionData = intersectionData;
-                }
-            } else {
-                // Hide preview when not over pegboard
-                if (this.config.placementMode.previewModel) {
-                    this.config.placementMode.previewModel.visible = false;
-                }
-            }
-        },
-
-        // Get intersection point on pegboard from mouse event
-        // Requirements: 3.2
+        // Get intersection point with pegboard
         getIntersectionPoint: function (event) {
-            if (!this.config.camera || !this.config.currentPegboardModel) {
-                console.log('⚠️ Missing camera or pegboard model:', {
-                    hasCamera: !!this.config.camera,
-                    hasPegboard: !!this.config.currentPegboardModel
-                });
-                return null;
-            }
+            if (!this.config.modules.core.config.camera || !this.config.modules.core.config.renderer) return null;
 
-            // Calculate mouse position in normalized device coordinates
-            const rect = this.config.renderer.domElement.getBoundingClientRect();
+            const canvas = this.config.modules.core.config.renderer.domElement;
+            const rect = canvas.getBoundingClientRect();
+
             const mouse = new THREE.Vector2();
             mouse.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
             mouse.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
 
-            // Create raycaster
             const raycaster = new THREE.Raycaster();
-            raycaster.setFromCamera(mouse, this.config.camera);
+            raycaster.setFromCamera(mouse, this.config.modules.core.config.camera);
 
-            // Check intersection with pegboard only (not accessories)
-            const intersects = raycaster.intersectObject(this.config.currentPegboardModel, true);
-
-            if (intersects.length > 0) {
-                // Return both point and intersection data for orientation
-                return {
-                    point: intersects[0].point,
-                    face: intersects[0].face,
-                    object: intersects[0].object,
-                    normal: intersects[0].face ? intersects[0].face.normal : null
-                };
+            if (this.config.currentPegboardModel) {
+                const intersects = raycaster.intersectObject(this.config.currentPegboardModel, true);
+                if (intersects.length > 0) {
+                    return {
+                        point: intersects[0].point,
+                        face: intersects[0].face,
+                        object: intersects[0].object,
+                        normal: intersects[0].face.normal
+                    };
+                }
             }
 
             return null;
         },
 
-        // Update preview model color based on placement validity
-        // Requirements: 3.2, 3.4 (collision detection)
-        updatePreviewColor: function (model, isValid) {
-            const color = isValid ? 0x00ff00 : 0xff0000; // Green if valid, red if invalid
+        // Apply accessory-specific positioning and orientation
+        applyAccessoryPositioning: function (model, accessoryData) {
+            // Default orientation - facing outward from pegboard
+            model.rotation.set(0, 0, 0);
+            
+            // Get accessory type from categories or name for specific positioning
+            const accessoryType = this.getAccessoryType(accessoryData);
+            
+            switch (accessoryType) {
+                case 'hook':
+                    // Hooks typically hang straight down
+                    // No additional rotation needed
+                    break;
+                    
+                case 'shelf':
+                    // Shelves should be level and extend outward
+                    // May need slight forward offset
+                    model.position.z += 0.005; // 5mm forward
+                    break;
+                    
+                case 'bin':
+                case 'container':
+                    // Bins and containers should be level
+                    // May need slight forward offset for clearance
+                    model.position.z += 0.01; // 1cm forward
+                    break;
+                    
+                case 'tool-holder':
+                    // Tool holders may need specific orientation
+                    // Depends on the specific tool holder design
+                    break;
+                    
+                default:
+                    // Default positioning for unknown accessories
+                    break;
+            }
+            
+            console.log('🎯 Applied positioning for accessory type:', {
+                name: accessoryData.name,
+                type: accessoryType,
+                position: model.position,
+                rotation: model.rotation
+            });
+        },
 
-            model.traverse(function (child) {
-                if (child.isMesh && child.material) {
-                    if (Array.isArray(child.material)) {
-                        child.material.forEach(function (mat) {
-                            mat.color.setHex(color);
-                        });
-                    } else {
-                        child.material.color.setHex(color);
+        // Determine accessory type from data
+        getAccessoryType: function (accessoryData) {
+            // Check categories first
+            if (accessoryData.categories && accessoryData.categories.length > 0) {
+                const category = accessoryData.categories[0].toLowerCase();
+                
+                if (category.includes('hook')) return 'hook';
+                if (category.includes('shelf') || category.includes('shelve')) return 'shelf';
+                if (category.includes('bin') || category.includes('container')) return 'bin';
+                if (category.includes('tool')) return 'tool-holder';
+            }
+            
+            // Check name as fallback
+            const name = accessoryData.name.toLowerCase();
+            if (name.includes('hook')) return 'hook';
+            if (name.includes('shelf')) return 'shelf';
+            if (name.includes('bin') || name.includes('container')) return 'bin';
+            if (name.includes('tool')) return 'tool-holder';
+            
+            return 'generic';
+        },
+
+        // Get specific error message for placement validation failure (Requirement 3.4)
+        getPlacementErrorMessage: function (position, dimensions) {
+            if (!this.config.gridSystem) {
+                return 'Grid system not initialized';
+            }
+
+            // Check bounds first
+            const grid = this.config.gridSystem;
+            const halfWidth = grid.width / 2;
+            const halfHeight = grid.height / 2;
+            const accessoryWidth = dimensions.width || 0.05;
+            const accessoryHeight = dimensions.height || 0.05;
+
+            const bounds = {
+                minX: position.x - accessoryWidth / 2,
+                maxX: position.x + accessoryWidth / 2,
+                minY: position.y - accessoryHeight / 2,
+                maxY: position.y + accessoryHeight / 2
+            };
+
+            if (bounds.minX < -halfWidth || bounds.maxX > halfWidth ||
+                bounds.minY < -halfHeight || bounds.maxY > halfHeight) {
+                return 'Accessory extends beyond pegboard boundaries';
+            }
+
+            // Check if on peg hole
+            if (!this.isPositionOnPegHole(position)) {
+                return 'Accessory must be placed on a peg hole';
+            }
+
+            // Check for overlaps
+            if (this.checkAccessoryOverlap(position, dimensions)) {
+                return 'Position is occupied by another accessory';
+            }
+
+            return 'Invalid placement position';
+        },
+
+        // Update scene validity state for visual feedback (Requirement 3.2)
+        updateSceneValidityState: function (isValid) {
+            const sceneElement = document.querySelector('.configurator-scene');
+            if (!sceneElement) return;
+
+            // Remove existing validity classes
+            sceneElement.classList.remove('invalid-position', 'valid-position');
+            
+            // Add appropriate class based on validity
+            if (isValid === true) {
+                sceneElement.classList.add('valid-position');
+            } else if (isValid === false) {
+                sceneElement.classList.add('invalid-position');
+            }
+        },
+
+        // Enhanced preview color system with better visual feedback (Requirement 3.2)
+        updatePreviewColor: function (model, isValid) {
+            const color = isValid ? 0x28a745 : 0xdc3545; // Bootstrap success/danger colors
+            const opacity = isValid ? 0.7 : 0.5;
+
+            model.traverse(child => {
+                if (child.material) {
+                    // Clone material to avoid affecting original
+                    if (!child.material.isPreviewMaterial) {
+                        child.material = child.material.clone();
+                        child.material.isPreviewMaterial = true;
+                        child.material.originalColor = child.material.color.getHex();
+                    }
+                    
+                    // Apply preview styling
+                    child.material.color.setHex(color);
+                    child.material.transparent = true;
+                    child.material.opacity = opacity;
+                    
+                    // Add subtle emissive glow for better visibility
+                    if (child.material.emissive) {
+                        child.material.emissive.setHex(isValid ? 0x0a4d1a : 0x4d0a0a);
+                        child.material.emissiveIntensity = 0.2;
                     }
                 }
             });
-        },
 
-        // Place accessory at click position
-        // Requirements: 3.2, 3.3 (grid snapping), 3.4 (collision detection)
-        placeAccessoryAtClick: function (event) {
-            console.log('🖱️ Click detected for accessory placement');
-
-            if (!this.config.placementMode || !this.config.placementMode.active) {
-                console.log('⚠️ Placement mode not active');
-                return;
+            // Add pulsing animation for invalid positions
+            if (!isValid && model.userData.pulseAnimation) {
+                clearInterval(model.userData.pulseAnimation);
             }
-
-            const intersectionData = this.getIntersectionPoint(event);
-            console.log('🎯 Click intersection:', intersectionData);
-
-            if (!intersectionData || !intersectionData.point) {
-                console.log('❌ No intersection with pegboard');
-                this.showError('Please click on the pegboard surface to place the accessory');
-                return;
-            }
-
-            console.log('✅ Valid intersection at:', intersectionData.point);
-
-            // Snap to nearest peg hole
-            const snappedPosition = this.snapToGrid(intersectionData.point);
-
-            // Get actual dimensions from the BASE model (before transformations)
-            // This gives us the true size without rotation/position affecting the bounding box
-            const dimensions = this.getModelDimensions(this.config.placementMode.model);
-            console.log('🔧 Click handler using actual dimensions:', dimensions);
-
-            // Verify position is on a valid peg hole
-            const pegHole = this.findPegHoleAtPosition(snappedPosition);
-            if (!pegHole) {
-                this.showError('Accessories can only be placed on peg holes');
-                return;
-            }
-
-            // Check if position is valid (collision detection)
-            if (!this.isValidGridPosition(snappedPosition, dimensions)) {
-                this.showError('Position already occupied or out of bounds');
-                return;
-            }
-
-            // Create final model by cloning the preview model (which is already scaled and oriented)
-            const model = this.config.placementMode.model.clone();
-
-            // Copy the scale from the preview model (which has the correct 0.01 scale)
-            if (this.config.placementMode.previewModel) {
-                model.scale.copy(this.config.placementMode.previewModel.scale);
-                console.log('🔧 Copied scale from preview:', model.scale);
-            }
-
-            // Get actual dimensions from the BASE model (before transformations)
-            const actualDimensions = this.getModelDimensions(this.config.placementMode.model);
-            const depthOffset = actualDimensions.depth / 2; // Half the depth to position back against pegboard
-
-            console.log('🔧 Accessory dimensions:', actualDimensions, 'Depth offset:', depthOffset);
-
-            // Position the model with back against pegboard (negative Z to go toward camera)
-            model.position.set(
-                snappedPosition.x,
-                snappedPosition.y,
-                snappedPosition.z + depthOffset + 0.001 // Back touches pegboard, extends toward camera
-            );
-
-            // Orient the model correctly
-            this.orientAccessoryModel(model, intersectionData);
-
-            // Add to scene
-            this.config.scene.add(model);
-
-            // Generate unique placement ID
-            const placementId = 'accessory-' + Date.now() + '-' + Math.random().toString(36).substr(2, 9);
-
-            console.log('📦 Storing accessory with dimensions:', {
-                metadataDimensions: dimensions,
-                actualDimensions: actualDimensions,
-                usingActual: true
-            });
-
-            // Add to placed accessories
-            this.config.placedAccessories.push({
-                placementId: placementId,
-                id: this.config.placementMode.accessoryData.id,
-                name: this.config.placementMode.accessoryData.name,
-                price: this.config.placementMode.accessoryData.price,
-                model: model,
-                position: {
-                    x: snappedPosition.x,
-                    y: snappedPosition.y,
-                    z: snappedPosition.z
-                },
-                dimensions: actualDimensions // Use actual model dimensions instead of metadata
-            });
-
-            // Update UI
-            this.updatePlacedAccessoriesDisplay();
-            this.updatePrice();
-
-            // Keep placement mode active for multiple placements
-            // User can press ESC or select another accessory to exit
-            this.showMessage('Accessory placed! Click to place another or press ESC to finish', 'success');
-
-            console.log('Accessory placed at peg hole:', snappedPosition);
-        },
-
-        // Scale accessory model based on dimensions
-        // Requirements: 2.3
-        scaleAccessoryModel: function (model, dimensions) {
-            if (!model || !dimensions) return;
-
-            // Calculate bounding box
-            const box = new THREE.Box3().setFromObject(model);
-            const size = new THREE.Vector3();
-            box.getSize(size);
-
-            // Scale to match dimensions if provided
-            if (dimensions.width && dimensions.height) {
-                const scaleX = dimensions.width / size.x;
-                const scaleY = dimensions.height / size.y;
-                const scaleZ = dimensions.depth ? dimensions.depth / size.z : scaleX;
-
-                // Use uniform scale
-                const uniformScale = Math.min(scaleX, scaleY, scaleZ);
-                model.scale.set(uniformScale, uniformScale, uniformScale);
-            } else {
-                // Default scale for accessories
-                model.scale.set(0.5, 0.5, 0.5);
-            }
-        },
-
-        // Remove an accessory
-        // Requirements: 3.4, 3.5
-        removeAccessory: function (placementId) {
-            console.log('Removing accessory:', placementId);
-            const self = this;
-
-            // Find the accessory
-            const accessory = this.config.placedAccessories.find(function (a) {
-                return a.placementId === placementId;
-            });
-
-            if (accessory) {
-                // Remove from scene
-                if (accessory.model) {
-                    this.config.scene.remove(accessory.model);
-
-                    // Dispose of geometry and materials to free memory
-                    accessory.model.traverse(function (child) {
-                        if (child.geometry) {
-                            child.geometry.dispose();
-                        }
-                        if (child.material) {
-                            if (Array.isArray(child.material)) {
-                                child.material.forEach(function (mat) {
-                                    mat.dispose();
-                                });
-                            } else {
-                                child.material.dispose();
+            
+            if (!isValid) {
+                let pulseDirection = 1;
+                model.userData.pulseAnimation = setInterval(() => {
+                    model.traverse(child => {
+                        if (child.material && child.material.isPreviewMaterial) {
+                            child.material.opacity += pulseDirection * 0.1;
+                            if (child.material.opacity >= 0.8 || child.material.opacity <= 0.3) {
+                                pulseDirection *= -1;
                             }
                         }
                     });
-
-                    console.log('Accessory model removed from scene');
-                }
+                }, 100);
             }
-
-            // Remove from configuration
-            this.config.placedAccessories = this.config.placedAccessories.filter(function (accessory) {
-                return accessory.placementId !== placementId;
-            });
-
-            // Update placed accessories display
-            this.updatePlacedAccessoriesDisplay();
-
-            // Update price immediately
-            this.updatePrice();
-
-            // Show success message
-            this.showMessage('Accessory removed successfully', 'success');
         },
 
-        // Reposition an accessory
-        // Requirements: 3.4, 3.5
-        repositionAccessory: function (placementId) {
-            console.log('Repositioning accessory:', placementId);
-            const self = this;
+        // Create visual grid helper for debugging
+        createGridHelper: function () {
+            if (!this.config.gridSystem || !this.config.modules.core) return;
 
-            // Find the accessory
-            const accessory = this.config.placedAccessories.find(function (a) {
-                return a.placementId === placementId;
+            // Remove existing grid helper
+            if (this.config.gridHelper) {
+                this.config.modules.core.removeFromScene(this.config.gridHelper);
+            }
+
+            const geometry = new THREE.BufferGeometry();
+            const positions = [];
+            const colors = [];
+
+            // Create small spheres at each peg hole position
+            this.config.gridSystem.pegHoles.forEach(hole => {
+                // Create a small sphere geometry for each peg hole
+                const sphereGeometry = new THREE.SphereGeometry(0.002, 8, 6);
+                const sphereMaterial = new THREE.MeshBasicMaterial({ color: 0xff0000 });
+                const sphere = new THREE.Mesh(sphereGeometry, sphereMaterial);
+                
+                sphere.position.set(hole.x, hole.y, hole.z);
+                this.config.modules.core.addToScene(sphere);
             });
 
-            if (!accessory) {
-                this.showError('Accessory not found');
-                return;
-            }
+            console.log('🔍 Grid helper created for debugging');
+        },
 
-            // Check if pegboard is selected
-            if (!this.config.currentPegboard) {
-                this.showError('Pegboard not found');
-                return;
-            }
-
-            // Free current grid cells
-            if (accessory.position && accessory.dimensions) {
-                this.freeGridCells(accessory.position, accessory.dimensions);
-            }
-
-            // Remove model from scene temporarily
-            if (accessory.model) {
-                this.config.scene.remove(accessory.model);
-            }
-
-            // Create accessory data for repositioning mode
-            const accessoryData = {
-                id: accessory.id,
-                name: accessory.name,
-                price: accessory.price,
-                dimensions: accessory.dimensions
+        // Get current configuration
+        getCurrentConfiguration: function () {
+            return {
+                pegboard: this.config.currentPegboard,
+                accessories: this.config.placedAccessories
             };
-
-            // Clone the model for preview
-            const previewModel = accessory.model.clone();
-            this.makeModelTransparent(previewModel, 0.5);
-
-            // Store repositioning mode data
-            this.config.repositionMode = {
-                active: true,
-                placementId: placementId,
-                accessoryData: accessoryData,
-                originalModel: accessory.model,
-                previewModel: previewModel,
-                originalPosition: Object.assign({}, accessory.position)
-            };
-
-            // Add preview to scene
-            this.config.scene.add(previewModel);
-
-            // Enable repositioning mode UI
-            this.enableRepositionMode();
-
-            // Show instruction message
-            this.showMessage('Click on the pegboard to reposition the accessory. Press ESC to cancel.', 'info');
-
-            console.log('Reposition mode activated for:', placementId);
-        },
-
-        // Enable reposition mode UI and event listeners
-        // Requirements: 3.4, 3.5
-        enableRepositionMode: function () {
-            const self = this;
-
-            // Add reposition mode class to container
-            $('.blasti-configurator-container').addClass('placement-mode reposition-mode');
-
-            // Change cursor
-            if (this.config.renderer && this.config.renderer.domElement) {
-                this.config.renderer.domElement.style.cursor = 'crosshair';
-            }
-
-            // Setup mouse move listener for preview
-            this.config.repositionMouseMoveHandler = function (event) {
-                self.updateRepositionPreview(event);
-            };
-
-            // Setup click listener for repositioning
-            this.config.repositionClickHandler = function (event) {
-                self.repositionAccessoryAtClick(event);
-            };
-
-            // Setup keyboard listener for cancellation
-            this.config.repositionKeyHandler = function (event) {
-                if (event.key === 'Escape' || event.keyCode === 27) {
-                    self.cancelRepositionMode();
-                }
-            };
-
-            // Attach event listeners
-            if (this.config.renderer && this.config.renderer.domElement) {
-                this.config.renderer.domElement.addEventListener('mousemove', this.config.repositionMouseMoveHandler);
-                this.config.renderer.domElement.addEventListener('click', this.config.repositionClickHandler);
-            }
-            document.addEventListener('keydown', this.config.repositionKeyHandler);
-
-            console.log('Reposition mode UI enabled');
-        },
-
-        // Disable reposition mode
-        // Requirements: 3.4, 3.5
-        disableRepositionMode: function () {
-            // Remove reposition mode class
-            $('.blasti-configurator-container').removeClass('placement-mode reposition-mode');
-
-            // Reset cursor
-            if (this.config.renderer && this.config.renderer.domElement) {
-                this.config.renderer.domElement.style.cursor = 'default';
-            }
-
-            // Remove event listeners
-            if (this.config.renderer && this.config.renderer.domElement) {
-                if (this.config.repositionMouseMoveHandler) {
-                    this.config.renderer.domElement.removeEventListener('mousemove', this.config.repositionMouseMoveHandler);
-                }
-                if (this.config.repositionClickHandler) {
-                    this.config.renderer.domElement.removeEventListener('click', this.config.repositionClickHandler);
-                }
-            }
-            if (this.config.repositionKeyHandler) {
-                document.removeEventListener('keydown', this.config.repositionKeyHandler);
-            }
-
-            // Remove preview model from scene
-            if (this.config.repositionMode && this.config.repositionMode.previewModel) {
-                this.config.scene.remove(this.config.repositionMode.previewModel);
-            }
-
-            // Clear reposition mode data
-            this.config.repositionMode = null;
-
-            console.log('Reposition mode disabled');
-        },
-
-        // Cancel reposition mode and restore original position
-        // Requirements: 3.4, 3.5
-        cancelRepositionMode: function () {
-            console.log('Cancelling reposition mode');
-
-            if (!this.config.repositionMode) {
-                return;
-            }
-
-            const placementId = this.config.repositionMode.placementId;
-            const originalModel = this.config.repositionMode.originalModel;
-            const originalPosition = this.config.repositionMode.originalPosition;
-
-            // Find the accessory in configuration
-            const accessory = this.config.placedAccessories.find(function (a) {
-                return a.placementId === placementId;
-            });
-
-            if (accessory) {
-                // Restore original model to scene
-                if (originalModel) {
-                    this.config.scene.add(originalModel);
-                }
-
-                // Re-occupy original grid cells
-                if (originalPosition && accessory.dimensions) {
-                    this.occupyGridCells(originalPosition, accessory.dimensions);
-                }
-            }
-
-            // Disable reposition mode
-            this.disableRepositionMode();
-
-            this.showMessage('Repositioning cancelled', 'info');
-        },
-
-        // Update reposition preview as mouse moves
-        // Requirements: 3.4, 3.5
-        updateRepositionPreview: function (event) {
-            if (!this.config.repositionMode || !this.config.repositionMode.active) {
-                return;
-            }
-
-            const intersectionPoint = this.getIntersectionPoint(event);
-
-            if (intersectionPoint) {
-                // Snap to grid
-                const snappedPosition = this.snapToGrid(intersectionPoint);
-
-                // Update preview model position
-                if (this.config.repositionMode.previewModel) {
-                    this.config.repositionMode.previewModel.position.set(
-                        snappedPosition.x,
-                        snappedPosition.y,
-                        snappedPosition.z
-                    );
-
-                    // Check if position is valid (no collision)
-                    const dimensions = this.config.repositionMode.accessoryData.dimensions || { width: 0.1, height: 0.1 };
-                    const isValid = this.isValidGridPosition(snappedPosition, dimensions);
-
-                    // Change preview color based on validity
-                    this.updatePreviewColor(this.config.repositionMode.previewModel, isValid);
-                }
-            }
-        },
-
-        // Reposition accessory at click position
-        // Requirements: 3.4, 3.5
-        repositionAccessoryAtClick: function (event) {
-            if (!this.config.repositionMode || !this.config.repositionMode.active) {
-                return;
-            }
-
-            const intersectionPoint = this.getIntersectionPoint(event);
-
-            if (!intersectionPoint) {
-                this.showError('Please click on the pegboard to reposition the accessory');
-                return;
-            }
-
-            // Snap to grid
-            const snappedPosition = this.snapToGrid(intersectionPoint);
-
-            // Get accessory dimensions
-            const dimensions = this.config.repositionMode.accessoryData.dimensions || { width: 0.1, height: 0.1 };
-
-            // Check if position is valid (collision detection)
-            if (!this.isValidGridPosition(snappedPosition, dimensions)) {
-                this.showError('Cannot reposition accessory here - position is occupied or out of bounds');
-                return;
-            }
-
-            const placementId = this.config.repositionMode.placementId;
-            const originalModel = this.config.repositionMode.originalModel;
-
-            // Find the accessory in configuration
-            const accessory = this.config.placedAccessories.find(function (a) {
-                return a.placementId === placementId;
-            });
-
-            if (!accessory) {
-                this.showError('Accessory not found in configuration');
-                this.disableRepositionMode();
-                return;
-            }
-
-            // Update model position
-            if (originalModel) {
-                originalModel.position.set(snappedPosition.x, snappedPosition.y, snappedPosition.z);
-                this.config.scene.add(originalModel);
-            }
-
-            // Update accessory position in configuration
-            accessory.position = {
-                x: snappedPosition.x,
-                y: snappedPosition.y,
-                z: snappedPosition.z
-            };
-
-            // Occupy new grid cells
-            this.occupyGridCells(snappedPosition, dimensions);
-
-            // Disable reposition mode
-            this.disableRepositionMode();
-
-            // Show success message
-            this.showMessage('Accessory repositioned successfully', 'success');
-
-            console.log('Accessory repositioned at:', snappedPosition);
-        },
-
-        // Remove pegboard selection
-        removePegboard: function () {
-            console.log('Removing pegboard selection');
-
-            // Remove pegboard model from scene
-            if (this.config.currentPegboardModel) {
-                this.config.scene.remove(this.config.currentPegboardModel);
-                this.config.currentPegboardModel = null;
-                console.log('Pegboard model removed from scene');
-            }
-
-            // Remove all accessories
-            const self = this;
-            this.config.placedAccessories.forEach(function (accessory) {
-                if (accessory.model) {
-                    self.config.scene.remove(accessory.model);
-                }
-            });
-            this.config.placedAccessories = [];
-
-            // Clear configuration
-            this.config.currentPegboard = null;
-
-            // Update UI
-            $('.pegboard-item').removeClass('selected');
-            $('#current-pegboard').html('<p>' + blastiConfigurator.strings.noPegboardSelected + '</p>');
-            this.updatePlacedAccessoriesDisplay();
-
-            // Update price immediately
-            this.updatePrice();
-        },
-
-        // Update placed accessories display
-        // Requirements: 3.4, 3.5
-        updatePlacedAccessoriesDisplay: function () {
-            const placedContainer = $('#placed-accessories');
-
-            if (this.config.placedAccessories.length === 0) {
-                placedContainer.html('<p>' + blastiConfigurator.strings.noAccessoriesPlaced + '</p>');
-                return;
-            }
-
-            let html = '<div class="placed-accessories-list">';
-            this.config.placedAccessories.forEach(function (accessory) {
-                html += '<div class="placed-accessory-item" data-placement-id="' + accessory.placementId + '">' +
-                    '<span class="accessory-name">' + accessory.name + '</span>' +
-                    '<div class="accessory-actions">' +
-                    '<button class="reposition-accessory-btn" data-placement-id="' + accessory.placementId + '" type="button" title="Reposition">↻</button>' +
-                    '<button class="remove-accessory-btn" data-placement-id="' + accessory.placementId + '" type="button" title="Remove">&times;</button>' +
-                    '</div>' +
-                    '</div>';
-            });
-            html += '</div>';
-
-            placedContainer.html(html);
-        },
-
-        // Camera angle presets
-        // Requirements: 2.2, 8.1, 8.2, 8.5
-        // Optimized for objects up to 2.5m in size
-        cameraAngles: {
-            'front': { position: { x: 0, y: 1.2, z: 4.0 }, target: { x: 0, y: 1.1, z: 0 } },
-            'side': { position: { x: 4.0, y: 1.2, z: 0 }, target: { x: 0, y: 1.1, z: 0 } },
-            'top': { position: { x: 0, y: 5.0, z: 1.0 }, target: { x: 0, y: 1.1, z: 0 } },
-            'angle': { position: { x: 2, y: 1.5, z: 4.5 }, target: { x: 0, y: 1.1, z: 0 } },
-            'close': { position: { x: 0, y: 1.0, z: 2.0 }, target: { x: 0, y: 1.1, z: 0 } }
-        },
-
-        // Initialize camera controls with predefined angles
-        // Requirements: 2.2, 8.1, 8.2
-        initializeCameraControls: function () {
-            const self = this;
-            const cameraControlsContainer = $('.camera-controls');
-
-            if (!cameraControlsContainer.length) {
-                return;
-            }
-
-            // Clear any existing buttons
-            cameraControlsContainer.find('.camera-angle-btn').remove();
-
-            // Create buttons for each camera angle
-            Object.keys(this.cameraAngles).forEach(function (angleName) {
-                const button = $('<button class="camera-angle-btn" data-angle="' + angleName + '">' +
-                    angleName.charAt(0).toUpperCase() + angleName.slice(1) +
-                    '</button>');
-
-                cameraControlsContainer.append(button);
-            });
-
-            // Set default angle as active
-            $('.camera-angle-btn[data-angle="angle"]').addClass('active');
-
-            console.log('Camera controls initialized with', Object.keys(this.cameraAngles).length, 'preset angles');
-        },
-
-        // Set camera angle with smooth transition
-        // Requirements: 2.2, 8.1, 8.2, 8.5
-        setCameraAngle: function (angle) {
-            console.log('Setting camera angle:', angle);
-
-            if (!this.config.camera || !this.config.controls) {
-                console.warn('Camera or controls not initialized');
-                return;
-            }
-
-            const preset = this.cameraAngles[angle];
-            if (!preset) {
-                console.warn('Unknown camera angle:', angle);
-                return;
-            }
-
-            // Update button states
-            $('.camera-angle-btn').removeClass('active');
-            $('.camera-angle-btn[data-angle="' + angle + '"]').addClass('active');
-
-            // Animate camera to new position
-            this.animateCameraToPosition(preset.position, preset.target);
-        },
-
-        // Animate camera to a specific position with smooth transition
-        // Requirements: 8.2, 8.5
-        animateCameraToPosition: function (targetPosition, targetLookAt) {
-            const self = this;
-
-            if (!this.config.camera || !this.config.controls) {
-                return;
-            }
-
-            // Store start positions
-            const startPosition = this.config.camera.position.clone();
-            const startTarget = this.config.controls.target.clone();
-
-            // Create target vectors
-            const endPosition = new THREE.Vector3(targetPosition.x, targetPosition.y, targetPosition.z);
-            const endTarget = new THREE.Vector3(targetLookAt.x, targetLookAt.y, targetLookAt.z);
-
-            // Animation parameters
-            const duration = 1000; // 1 second
-            const startTime = Date.now();
-
-            // Animation function
-            function animate() {
-                const elapsed = Date.now() - startTime;
-                const progress = Math.min(elapsed / duration, 1);
-
-                // Smooth easing function (ease-in-out cubic)
-                const eased = progress < 0.5
-                    ? 4 * progress * progress * progress
-                    : 1 - Math.pow(-2 * progress + 2, 3) / 2;
-
-                // Interpolate camera position
-                self.config.camera.position.lerpVectors(startPosition, endPosition, eased);
-
-                // Interpolate controls target
-                self.config.controls.target.lerpVectors(startTarget, endTarget, eased);
-
-                // Update controls
-                self.config.controls.update();
-
-                // Continue animation if not complete
-                if (progress < 1) {
-                    requestAnimationFrame(animate);
-                }
-            }
-
-            // Start animation
-            animate();
-        },
-
-        // Automatically frame camera to view model optimally
-        // Requirements: 2.3, 8.1
-        frameCameraToModel: function (model) {
-            if (!model || !this.config.camera || !this.config.controls) {
-                return;
-            }
-
-            // Calculate bounding box AFTER scaling
-            const box = new THREE.Box3().setFromObject(model);
-            const size = new THREE.Vector3();
-            const center = new THREE.Vector3();
-
-            box.getSize(size);
-            box.getCenter(center);
-
-            // Calculate the maximum dimension
-            const maxDim = Math.max(size.x, size.y, size.z);
-
-            // For pegboards, use a reasonable fixed distance based on typical size
-            // Most pegboards are 0.3-1.0 meters, so camera should be 1-3 meters away
-            let cameraDistance;
-
-            if (maxDim < 0.1) {
-                // Very small model (< 10cm) - probably an error, use default
-                cameraDistance = 1.0;
-                console.warn('Model is very small after scaling. Using default camera distance.');
-            } else if (maxDim > 10) {
-                // Very large model (> 10m) - probably an error, use default
-                cameraDistance = 3.0;
-                console.warn('Model is very large after scaling. Using default camera distance.');
-            } else {
-                // Normal size - calculate based on FOV
-                const fov = this.config.camera.fov * (Math.PI / 180);
-                cameraDistance = Math.abs(maxDim / Math.sin(fov / 2)) * 1.5;
-                // Clamp to reasonable range
-                cameraDistance = Math.max(0.5, Math.min(cameraDistance, 5.0));
-            }
-
-            // Position camera at an angle for better view
-            const cameraOffset = new THREE.Vector3(
-                cameraDistance * 0.5,  // X: slightly to the side
-                cameraDistance * 0.4,  // Y: slightly above
-                cameraDistance * 0.9   // Z: mostly in front
-            );
-
-            const cameraPosition = center.clone().add(cameraOffset);
-
-            // Always look at origin since model is positioned there
-            const lookAtTarget = new THREE.Vector3(0, 0, 0);
-
-            // Animate camera to new position
-            this.animateCameraToPosition(
-                {
-                    x: cameraPosition.x,
-                    y: cameraPosition.y,
-                    z: cameraPosition.z
-                },
-                {
-                    x: lookAtTarget.x,
-                    y: lookAtTarget.y,
-                    z: lookAtTarget.z
-                }
-            );
-
-            // Update controls limits based on model size
-            if (this.config.controls) {
-                this.config.controls.minDistance = Math.max(cameraDistance * 0.2, 0.1);
-                this.config.controls.maxDistance = Math.max(cameraDistance * 3, 10.0);
-                this.config.controls.target.set(lookAtTarget.x, lookAtTarget.y, lookAtTarget.z);
-                this.config.controls.update();
-            }
-
-            console.log('Camera framed to model:', {
-                modelSize: size,
-                modelCenter: center,
-                maxDim: maxDim,
-                cameraDistance: cameraDistance,
-                cameraPosition: cameraPosition,
-                lookingAt: lookAtTarget
-            });
-
-            // Log camera frustum to check if model is in view
-            this.config.camera.updateProjectionMatrix();
-            console.log('Camera frustum check:', {
-                near: this.config.camera.near,
-                far: this.config.camera.far,
-                distanceToOrigin: this.config.camera.position.distanceTo(lookAtTarget)
-            });
-        },
-
-        // Update total price display with real-time calculation
-        // Requirements: 7.1, 7.2, 7.5
-        updatePrice: function () {
-            const self = this;
-
-            // Get current configuration
-            const pegboard_id = this.config.currentPegboard ? this.config.currentPegboard.id : 0;
-            const accessory_ids = this.config.placedAccessories.map(function (a) { return a.id; });
-
-            // Calculate price via AJAX for accurate WooCommerce pricing
-            $.ajax({
-                url: blastiConfigurator.ajaxUrl,
-                type: 'POST',
-                data: {
-                    action: 'blasti_calculate_price',
-                    nonce: blastiConfigurator.nonce,
-                    pegboard_id: pegboard_id,
-                    accessory_ids: accessory_ids
-                },
-                success: function (response) {
-                    if (response.success) {
-                        self.config.priceBreakdown = response.data;
-                        self.config.totalPrice = response.data.total;
-                        self.displayPriceBreakdown(response.data);
-                    } else {
-                        console.error('Price calculation failed:', response.data);
-                        self.displayPriceError();
-                    }
-                },
-                error: function () {
-                    console.error('AJAX error calculating price');
-                    self.displayPriceError();
-                }
-            });
-        },
-
-        // Display detailed price breakdown
-        // Requirements: 7.1, 7.2
-        displayPriceBreakdown: function (priceData) {
-            const self = this;
-
-            // Update main price display with animation
-            const priceElement = $('.price-amount');
-            priceElement.addClass('price-updating');
-
-            setTimeout(function () {
-                priceElement.html(priceData.formatted_total);
-                priceElement.removeClass('price-updating');
-            }, 200);
-
-            // Update detailed breakdown if container exists
-            const breakdownContainer = $('.price-breakdown');
-            if (breakdownContainer.length) {
-                let breakdownHtml = '';
-
-                // Pegboard price
-                if (priceData.pegboard) {
-                    breakdownHtml += '<div class="price-item pegboard-price">' +
-                        '<span class="item-name">' + priceData.pegboard.name + '</span>' +
-                        '<span class="item-price">' + priceData.pegboard.formatted_price + '</span>' +
-                        '</div>';
-                }
-
-                // Accessory prices
-                if (priceData.accessories && priceData.accessories.length > 0) {
-                    priceData.accessories.forEach(function (accessory) {
-                        breakdownHtml += '<div class="price-item accessory-price">' +
-                            '<span class="item-name">' + accessory.name + '</span>' +
-                            '<span class="item-price">' + accessory.formatted_price + '</span>' +
-                            '</div>';
-                    });
-                }
-
-                // Subtotal
-                if (priceData.subtotal > 0) {
-                    breakdownHtml += '<div class="price-item subtotal">' +
-                        '<span class="item-name"><strong>' + blastiConfigurator.strings.subtotal + '</strong></span>' +
-                        '<span class="item-price"><strong>' + priceData.formatted_subtotal + '</strong></span>' +
-                        '</div>';
-                }
-
-                breakdownContainer.html(breakdownHtml);
-            }
-
-            // Enable/disable add to cart button based on configuration
-            const addToCartBtn = $('#add-to-cart-btn, .add-to-cart-btn');
-            addToCartBtn.prop('disabled', !priceData.pegboard);
-
-            // Update button text to show total
-            if (priceData.pegboard && priceData.total > 0) {
-                const originalText = addToCartBtn.data('original-text') || blastiConfigurator.strings.addToCart;
-                addToCartBtn.text(originalText + ' - ' + priceData.formatted_total);
-            } else {
-                addToCartBtn.text(blastiConfigurator.strings.selectPegboard);
-            }
-
-            // Trigger custom event for theme integration
-            $(document).trigger('blasti_price_updated', [priceData]);
-        },
-
-        // Display price calculation error
-        displayPriceError: function () {
-            const priceElement = $('.price-amount');
-            priceElement.text('--');
-
-            const addToCartBtn = $('#add-to-cart-btn, .add-to-cart-btn');
-            addToCartBtn.prop('disabled', true).text(blastiConfigurator.strings.priceError);
-        },
-
-        // Get cached product prices or fetch from server
-        // Requirements: 7.5
-        getProductPrices: function (productIds) {
-            const self = this;
-
-            return new Promise(function (resolve, reject) {
-                // Check cache first
-                const uncachedIds = productIds.filter(function (id) {
-                    return !self.config.productPrices[id];
-                });
-
-                if (uncachedIds.length === 0) {
-                    // All prices are cached
-                    const cachedPrices = {};
-                    productIds.forEach(function (id) {
-                        cachedPrices[id] = self.config.productPrices[id];
-                    });
-                    resolve(cachedPrices);
-                    return;
-                }
-
-                // Fetch uncached prices
-                $.ajax({
-                    url: blastiConfigurator.ajaxUrl,
-                    type: 'POST',
-                    data: {
-                        action: 'blasti_get_product_prices',
-                        nonce: blastiConfigurator.nonce,
-                        product_ids: uncachedIds
-                    },
-                    success: function (response) {
-                        if (response.success) {
-                            // Cache the prices
-                            Object.keys(response.data.prices).forEach(function (id) {
-                                self.config.productPrices[id] = response.data.prices[id];
-                            });
-
-                            // Return all requested prices
-                            const allPrices = {};
-                            productIds.forEach(function (id) {
-                                allPrices[id] = self.config.productPrices[id];
-                            });
-
-                            resolve(allPrices);
-                        } else {
-                            reject(new Error(response.data.message || 'Failed to get prices'));
-                        }
-                    },
-                    error: function () {
-                        reject(new Error('Network error getting prices'));
-                    }
-                });
-            });
-        },
-
-        // Initialize price display on load
-        // Requirements: 7.1
-        initializePriceDisplay: function () {
-            // Set initial price to $0.00
-            $('.price-amount').text('$0.00');
-
-            // Disable add to cart button initially
-            $('#add-to-cart-btn, .add-to-cart-btn').prop('disabled', true)
-                .text(blastiConfigurator.strings.selectPegboard);
-
-            // Store original button text
-            $('#add-to-cart-btn, .add-to-cart-btn').each(function () {
-                $(this).data('original-text', $(this).text());
-            });
-        },
-
-        // Validate configuration before adding to cart
-        validateConfiguration: function () {
-            const self = this;
-
-            return new Promise(function (resolve, reject) {
-                if (!self.config.currentPegboard) {
-                    reject(new Error(blastiConfigurator.strings.selectPegboard));
-                    return;
-                }
-
-                const configuration = {
-                    pegboard_id: self.config.currentPegboard.id,
-                    accessories: self.config.placedAccessories.map(function (a) {
-                        return {
-                            id: a.id,
-                            position: a.position
-                        };
-                    })
-                };
-
-                $.ajax({
-                    url: blastiConfigurator.ajaxUrl,
-                    type: 'POST',
-                    data: {
-                        action: 'blasti_validate_cart_config',
-                        nonce: blastiConfigurator.nonce,
-                        configuration: JSON.stringify(configuration)
-                    },
-                    success: function (response) {
-                        if (response.success) {
-                            resolve(response.data);
-                        } else {
-                            reject(new Error(response.data.message || blastiConfigurator.strings.error));
-                        }
-                    },
-                    error: function (xhr, status, error) {
-                        reject(new Error(blastiConfigurator.strings.error + ' (' + error + ')'));
-                    }
-                });
-            });
-        },
-
-        // Add configuration to cart with enhanced validation and error handling
-        addToCart: function () {
-            const self = this;
-
-            // Show loading state
-            const button = $('#add-to-cart-btn');
-            const originalText = button.text();
-            button.text(blastiConfigurator.strings.loading).prop('disabled', true);
-
-            // First validate the configuration
-            this.validateConfiguration()
-                .then(function (validationData) {
-                    // Show validation success briefly
-                    self.showMessage(validationData.message, 'success');
-
-                    // Prepare configuration data
-                    const configuration = {
-                        pegboard_id: self.config.currentPegboard.id,
-                        accessories: self.config.placedAccessories.map(function (a) {
-                            return {
-                                id: a.id,
-                                position: a.position
-                            };
-                        })
-                    };
-
-                    // Add to cart
-                    return $.ajax({
-                        url: blastiConfigurator.ajaxUrl,
-                        type: 'POST',
-                        data: {
-                            action: 'blasti_add_to_cart',
-                            nonce: blastiConfigurator.nonce,
-                            configuration: JSON.stringify(configuration)
-                        }
-                    });
-                })
-                .then(function (response) {
-                    if (response.success) {
-                        // Show success message
-                        self.showMessage(response.data.message, 'success');
-
-                        // Update button to show success
-                        button.text('✓ ' + blastiConfigurator.strings.addToCartSuccess);
-
-                        // Redirect to cart after delay
-                        const redirectDelay = response.data.redirect_delay || 1500;
-                        setTimeout(function () {
-                            window.location.href = response.data.cart_url;
-                        }, redirectDelay);
-
-                    } else {
-                        throw new Error(response.data.message || blastiConfigurator.strings.addToCartError);
-                    }
-                })
-                .catch(function (error) {
-                    // Handle validation or cart errors
-                    let errorMessage = blastiConfigurator.strings.addToCartError;
-
-                    if (error.responseJSON && error.responseJSON.data) {
-                        const errorData = error.responseJSON.data;
-
-                        if (errorData.validation_errors) {
-                            // Handle validation errors
-                            errorMessage = self.formatValidationErrors(errorData.validation_errors);
-                        } else if (errorData.message) {
-                            errorMessage = errorData.message;
-                        }
-                    } else if (error.message) {
-                        errorMessage = error.message;
-                    }
-
-                    self.showError(errorMessage);
-
-                    // Reset button
-                    button.text(originalText).prop('disabled', false);
-                });
-        },
-
-        // Format validation errors for display
-        formatValidationErrors: function (errors) {
-            let message = blastiConfigurator.strings.error + '\n\n';
-
-            if (errors.pegboard) {
-                message += '• ' + errors.pegboard + '\n';
-            }
-
-            if (errors.accessories) {
-                message += '• Accessory issues:\n';
-                Object.keys(errors.accessories).forEach(function (index) {
-                    message += '  - ' + errors.accessories[index] + '\n';
-                });
-            }
-
-            return message.trim();
         },
 
         // Show error message
         showError: function (message) {
-            this.showMessage(message, 'error');
+            if (this.config.modules.ui && this.config.modules.ui.showError) {
+                this.config.modules.ui.showError(message);
+            } else {
+                console.error('Error:', message);
+                alert('Error: ' + message);
+            }
         },
 
-        // Show message with type (success, error, info)
-        showMessage: function (message, type) {
-            type = type || 'info';
-
-            // Remove existing messages of the same type
-            $('.configurator-message.' + type).remove();
-
-            const messageDiv = $('<div class="configurator-message ' + type + '">' +
-                '<span class="message-text">' + message + '</span>' +
-                '<button class="message-close" type="button">&times;</button>' +
-                '</div>');
-
-            // Add to page
-            if ($('.configurator-messages').length) {
-                $('.configurator-messages').append(messageDiv);
+        // Show success message
+        showSuccess: function (message) {
+            if (this.config.modules.ui && this.config.modules.ui.showSuccess) {
+                this.config.modules.ui.showSuccess(message);
             } else {
-                $('body').append('<div class="configurator-messages"></div>');
-                $('.configurator-messages').append(messageDiv);
+                console.log('Success:', message);
+            }
+        },
+
+        // Dispose all resources
+        dispose: function () {
+            console.log('🧹 Disposing configurator...');
+
+            // Exit placement mode
+            this.exitPlacementMode();
+
+            // Dispose modules
+            if (this.config.modules.core) {
+                this.config.modules.core.dispose();
+            }
+            if (this.config.modules.models) {
+                this.config.modules.models.dispose();
+            }
+            if (this.config.modules.ui) {
+                this.config.modules.ui.dispose();
+            }
+            if (this.config.modules.cart) {
+                this.config.modules.cart.dispose();
+            }
+            if (this.config.modules.memoryManager) {
+                this.config.modules.memoryManager.disposeAll();
             }
 
-            // Handle close button
-            messageDiv.find('.message-close').on('click', function () {
-                messageDiv.fadeOut(function () {
-                    messageDiv.remove();
-                });
-            });
+            // Clear configuration
+            this.config.initialized = false;
+            this.config.currentPegboard = null;
+            this.config.currentPegboardModel = null;
+            this.config.placedAccessories = [];
+            this.config.gridSystem = null;
 
-            // Auto-remove after delay (longer for errors)
-            const delay = type === 'error' ? 8000 : (type === 'success' ? 4000 : 5000);
-            setTimeout(function () {
-                if (messageDiv.is(':visible')) {
-                    messageDiv.fadeOut(function () {
-                        messageDiv.remove();
-                    });
-                }
-            }, delay);
-
-            return messageDiv;
-        },
-
-        // Get cart status
-        getCartStatus: function () {
-            const self = this;
-
-            return new Promise(function (resolve, reject) {
-                $.ajax({
-                    url: blastiConfigurator.ajaxUrl,
-                    type: 'POST',
-                    data: {
-                        action: 'blasti_get_cart_status',
-                        nonce: blastiConfigurator.nonce
-                    },
-                    success: function (response) {
-                        if (response.success) {
-                            resolve(response.data);
-                        } else {
-                            reject(new Error(response.data.message || 'Failed to get cart status'));
-                        }
-                    },
-                    error: function (xhr, status, error) {
-                        reject(new Error('Network error: ' + error));
-                    }
-                });
-            });
-        },
-
-        // Update cart display in header/widget if present
-        updateCartDisplay: function () {
-            const self = this;
-
-            this.getCartStatus()
-                .then(function (cartData) {
-                    // Update cart count in theme header if present
-                    $('.cart-count, .cart-contents-count').text(cartData.cart_count);
-
-                    // Update cart total if present
-                    $('.cart-total').html(cartData.cart_total);
-
-                    // Trigger custom event for theme integration
-                    $(document).trigger('blasti_cart_updated', [cartData]);
-                })
-                .catch(function (error) {
-                    console.warn('Failed to update cart display:', error.message);
-                });
+            console.log('✅ Configurator disposed');
         }
     };
 
-    // Initialize when document is ready
-    $(document).ready(function () {
-        BlastiConfigurator.init();
+    // Auto-cleanup on page unload
+    window.addEventListener('beforeunload', function () {
+        if (BlastiConfigurator.config.initialized) {
+            BlastiConfigurator.dispose();
+        }
     });
 
 })(jQuery);

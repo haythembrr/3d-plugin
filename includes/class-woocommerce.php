@@ -445,36 +445,61 @@ class Blasti_Configurator_WooCommerce {
     }
     
     /**
-     * Get products for configurator with enhanced filtering and metadata
+     * Get products for configurator with optimized queries and caching
      */
     public function get_configurator_products($type = 'all', $include_out_of_stock = false) {
-        $args = array(
-            'post_type' => 'product',
-            'post_status' => 'publish',
-            'posts_per_page' => -1,
-            'meta_query' => array(
-                array(
-                    'key' => '_blasti_configurator_enabled',
-                    'value' => 'yes',
-                    'compare' => '='
-                )
+        // Check cache first
+        $cache_key = "blasti_products_{$type}_" . ($include_out_of_stock ? 'with_oos' : 'no_oos');
+        $cached_products = get_transient($cache_key);
+        
+        if (false !== $cached_products) {
+            return $cached_products;
+        }
+
+        // Optimized query with meta_query
+        $meta_query = array(
+            'relation' => 'AND',
+            array(
+                'key' => '_blasti_configurator_enabled',
+                'value' => 'yes',
+                'compare' => '='
             )
         );
         
         // Filter by product type if specified
         if ($type !== 'all') {
-            $args['meta_query'][] = array(
+            $meta_query[] = array(
                 'key' => '_blasti_product_type',
                 'value' => $type,
                 'compare' => '='
             );
         }
+
+        $args = array(
+            'post_type' => 'product',
+            'post_status' => 'publish',
+            'posts_per_page' => -1,
+            'meta_query' => $meta_query,
+            'fields' => 'ids' // Only get IDs first for better performance
+        );
         
-        $products = get_posts($args);
+        $product_ids = get_posts($args);
+        
+        if (empty($product_ids)) {
+            set_transient($cache_key, array(), HOUR_IN_SECONDS);
+            return array();
+        }
+
+        // Batch load all meta data to avoid N+1 queries
+        $this->preload_product_meta($product_ids);
+        
+        // Batch load WooCommerce products
+        $wc_products = $this->batch_load_wc_products($product_ids);
+        
         $product_data = array();
         
-        foreach ($products as $product_post) {
-            $product = wc_get_product($product_post->ID);
+        foreach ($product_ids as $product_id) {
+            $product = isset($wc_products[$product_id]) ? $wc_products[$product_id] : null;
             
             if (!$product) {
                 continue;
@@ -485,16 +510,14 @@ class Blasti_Configurator_WooCommerce {
                 continue;
             }
             
-            // Get and parse dimensions
-            $dimensions_json = get_post_meta($product->get_id(), '_blasti_dimensions', true);
-            $dimensions = $this->parse_dimensions($dimensions_json);
+            // Get pre-loaded meta data
+            $dimensions = $this->get_cached_dimensions($product_id);
+            $compatibility = $this->get_cached_compatibility($product_id);
+            $product_type = get_post_meta($product_id, '_blasti_product_type', true);
+            $model_url = get_post_meta($product_id, '_blasti_model_url', true);
             
-            // Get and parse compatibility
-            $compatibility_raw = get_post_meta($product->get_id(), '_blasti_compatibility', true);
-            $compatibility = $this->parse_compatibility($compatibility_raw);
-            
-            // Get product category for accessories
-            $categories = wp_get_post_terms($product->get_id(), 'product_cat', array('fields' => 'names'));
+            // Get product categories (batch loaded)
+            $categories = $this->get_cached_categories($product_id);
             
             $product_data[] = array(
                 'id' => $product->get_id(),
@@ -502,8 +525,8 @@ class Blasti_Configurator_WooCommerce {
                 'description' => $product->get_short_description(),
                 'price' => floatval($product->get_price()),
                 'formatted_price' => $product->get_price_html(),
-                'type' => get_post_meta($product->get_id(), '_blasti_product_type', true),
-                'model_url' => get_post_meta($product->get_id(), '_blasti_model_url', true),
+                'type' => $product_type,
+                'model_url' => $model_url,
                 'dimensions' => $dimensions,
                 'compatibility' => $compatibility,
                 'categories' => $categories,
@@ -521,7 +544,123 @@ class Blasti_Configurator_WooCommerce {
         // Sort products by type and name
         usort($product_data, array($this, 'sort_products'));
         
+        // Cache the results for 1 hour
+        set_transient($cache_key, $product_data, HOUR_IN_SECONDS);
+        
         return $product_data;
+    }
+
+    /**
+     * Preload product meta data to avoid N+1 queries
+     */
+    private function preload_product_meta($product_ids) {
+        if (empty($product_ids)) return;
+
+        global $wpdb;
+        
+        // Batch load all meta data for these products
+        $meta_keys = array(
+            '_blasti_dimensions',
+            '_blasti_compatibility', 
+            '_blasti_product_type',
+            '_blasti_model_url'
+        );
+        
+        $placeholders = implode(',', array_fill(0, count($product_ids), '%d'));
+        $meta_keys_placeholders = implode(',', array_fill(0, count($meta_keys), '%s'));
+        
+        $query = $wpdb->prepare("
+            SELECT post_id, meta_key, meta_value 
+            FROM {$wpdb->postmeta} 
+            WHERE post_id IN ($placeholders) 
+            AND meta_key IN ($meta_keys_placeholders)
+        ", array_merge($product_ids, $meta_keys));
+        
+        $results = $wpdb->get_results($query);
+        
+        // Cache results in wp_cache for this request
+        foreach ($results as $row) {
+            wp_cache_set("meta_{$row->post_id}_{$row->meta_key}", $row->meta_value, 'blasti_meta');
+        }
+        
+        // Batch load categories
+        $this->preload_product_categories($product_ids);
+    }
+
+    /**
+     * Preload product categories to avoid N+1 queries
+     */
+    private function preload_product_categories($product_ids) {
+        if (empty($product_ids)) return;
+
+        // Batch load all category relationships
+        $terms = wp_get_object_terms($product_ids, 'product_cat', array(
+            'fields' => 'all'
+        ));
+        
+        // Group by product ID
+        $categories_by_product = array();
+        foreach ($terms as $term) {
+            if (!isset($categories_by_product[$term->object_id])) {
+                $categories_by_product[$term->object_id] = array();
+            }
+            $categories_by_product[$term->object_id][] = $term->name;
+        }
+        
+        // Cache in wp_cache
+        foreach ($product_ids as $product_id) {
+            $categories = isset($categories_by_product[$product_id]) ? $categories_by_product[$product_id] : array();
+            wp_cache_set("categories_{$product_id}", $categories, 'blasti_categories');
+        }
+    }
+
+    /**
+     * Batch load WooCommerce products
+     */
+    private function batch_load_wc_products($product_ids) {
+        $products = array();
+        
+        foreach ($product_ids as $product_id) {
+            $product = wc_get_product($product_id);
+            if ($product) {
+                $products[$product_id] = $product;
+            }
+        }
+        
+        return $products;
+    }
+
+    /**
+     * Get cached dimensions with fallback
+     */
+    private function get_cached_dimensions($product_id) {
+        $dimensions_json = wp_cache_get("meta_{$product_id}__blasti_dimensions", 'blasti_meta');
+        if (false === $dimensions_json) {
+            $dimensions_json = get_post_meta($product_id, '_blasti_dimensions', true);
+        }
+        return $this->parse_dimensions($dimensions_json);
+    }
+
+    /**
+     * Get cached compatibility with fallback
+     */
+    private function get_cached_compatibility($product_id) {
+        $compatibility_raw = wp_cache_get("meta_{$product_id}__blasti_compatibility", 'blasti_meta');
+        if (false === $compatibility_raw) {
+            $compatibility_raw = get_post_meta($product_id, '_blasti_compatibility', true);
+        }
+        return $this->parse_compatibility($compatibility_raw);
+    }
+
+    /**
+     * Get cached categories with fallback
+     */
+    private function get_cached_categories($product_id) {
+        $categories = wp_cache_get("categories_{$product_id}", 'blasti_categories');
+        if (false === $categories) {
+            $categories = wp_get_post_terms($product_id, 'product_cat', array('fields' => 'names'));
+        }
+        return is_array($categories) ? $categories : array();
     }
     
     /**
@@ -821,6 +960,34 @@ class Blasti_Configurator_WooCommerce {
         if (isset($_POST['_blasti_compatibility'])) {
             update_post_meta($post_id, '_blasti_compatibility', sanitize_text_field($_POST['_blasti_compatibility']));
         }
+        
+        // Clear product cache when product is updated
+        $this->clear_product_cache();
+    }
+    
+    /**
+     * Clear product cache
+     */
+    public function clear_product_cache() {
+        // Clear all product cache variants
+        $cache_keys = array(
+            'blasti_products_all_with_oos',
+            'blasti_products_all_no_oos',
+            'blasti_products_pegboard_with_oos',
+            'blasti_products_pegboard_no_oos',
+            'blasti_products_accessory_with_oos',
+            'blasti_products_accessory_no_oos'
+        );
+        
+        foreach ($cache_keys as $key) {
+            delete_transient($key);
+        }
+        
+        // Clear wp_cache groups
+        wp_cache_flush_group('blasti_meta');
+        wp_cache_flush_group('blasti_categories');
+        
+        error_log('Blasti Configurator: Product cache cleared');
     }
     
     /**

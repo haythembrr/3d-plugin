@@ -497,29 +497,34 @@ class Blasti_Configurator_WooCommerce {
         $wc_products = $this->batch_load_wc_products($product_ids);
         
         $product_data = array();
-        
+
         foreach ($product_ids as $product_id) {
             $product = isset($wc_products[$product_id]) ? $wc_products[$product_id] : null;
-            
+
             if (!$product) {
                 continue;
             }
-            
+
             // Check stock availability
             if (!$include_out_of_stock && !$product->is_in_stock()) {
                 continue;
             }
-            
+
             // Get pre-loaded meta data
             $dimensions = $this->get_cached_dimensions($product_id);
             $compatibility = $this->get_cached_compatibility($product_id);
             $product_type = get_post_meta($product_id, '_blasti_product_type', true);
             $model_url = get_post_meta($product_id, '_blasti_model_url', true);
-            
+
             // Get product categories (batch loaded)
             $categories = $this->get_cached_categories($product_id);
-            
-            $product_data[] = array(
+
+            // NEW: Get enhanced fields from cache
+            $dimensions_v2 = $this->get_cached_enhanced_field($product_id, '_blasti_dimensions_v2');
+            $peg_config = $this->get_cached_enhanced_field($product_id, '_blasti_peg_config');
+            $peg_holes = $this->get_cached_enhanced_field($product_id, '_blasti_peg_holes');
+
+            $item_data = array(
                 'id' => $product->get_id(),
                 'name' => $product->get_name(),
                 'description' => $product->get_short_description(),
@@ -539,6 +544,21 @@ class Blasti_Configurator_WooCommerce {
                 'featured' => $product->is_featured(),
                 'date_created' => $product->get_date_created()->date('Y-m-d H:i:s')
             );
+
+            // NEW: Add enhanced fields if available
+            if ($dimensions_v2 !== null) {
+                $item_data['dimensions_v2'] = $dimensions_v2;
+            }
+
+            if ($peg_config !== null) {
+                $item_data['peg_config'] = $peg_config;
+            }
+
+            if ($peg_holes !== null) {
+                $item_data['peg_holes'] = $peg_holes;
+            }
+
+            $product_data[] = $item_data;
         }
         
         // Sort products by type and name
@@ -557,32 +577,36 @@ class Blasti_Configurator_WooCommerce {
         if (empty($product_ids)) return;
 
         global $wpdb;
-        
+
         // Batch load all meta data for these products
         $meta_keys = array(
             '_blasti_dimensions',
-            '_blasti_compatibility', 
+            '_blasti_compatibility',
             '_blasti_product_type',
-            '_blasti_model_url'
+            '_blasti_model_url',
+            // NEW: Enhanced meta fields
+            '_blasti_dimensions_v2',
+            '_blasti_peg_config',
+            '_blasti_peg_holes'
         );
-        
+
         $placeholders = implode(',', array_fill(0, count($product_ids), '%d'));
         $meta_keys_placeholders = implode(',', array_fill(0, count($meta_keys), '%s'));
-        
+
         $query = $wpdb->prepare("
-            SELECT post_id, meta_key, meta_value 
-            FROM {$wpdb->postmeta} 
-            WHERE post_id IN ($placeholders) 
+            SELECT post_id, meta_key, meta_value
+            FROM {$wpdb->postmeta}
+            WHERE post_id IN ($placeholders)
             AND meta_key IN ($meta_keys_placeholders)
         ", array_merge($product_ids, $meta_keys));
-        
+
         $results = $wpdb->get_results($query);
-        
+
         // Cache results in wp_cache for this request
         foreach ($results as $row) {
             wp_cache_set("meta_{$row->post_id}_{$row->meta_key}", $row->meta_value, 'blasti_meta');
         }
-        
+
         // Batch load categories
         $this->preload_product_categories($product_ids);
     }
@@ -661,6 +685,24 @@ class Blasti_Configurator_WooCommerce {
             $categories = wp_get_post_terms($product_id, 'product_cat', array('fields' => 'names'));
         }
         return is_array($categories) ? $categories : array();
+    }
+
+    /**
+     * Get cached enhanced field with fallback (JSON decoded)
+     * NEW: Helper for Phase 1 enhanced fields
+     */
+    private function get_cached_enhanced_field($product_id, $meta_key) {
+        $value_json = wp_cache_get("meta_{$product_id}_{$meta_key}", 'blasti_meta');
+        if (false === $value_json) {
+            $value_json = get_post_meta($product_id, $meta_key, true);
+        }
+
+        if (empty($value_json)) {
+            return null;
+        }
+
+        $decoded = json_decode($value_json, true);
+        return (json_last_error() === JSON_ERROR_NONE) ? $decoded : null;
     }
     
     /**
@@ -804,26 +846,36 @@ class Blasti_Configurator_WooCommerce {
      */
     public function get_product_by_id($product_id) {
         $product = wc_get_product($product_id);
-        
+
         if (!$product) {
             return null;
         }
-        
+
         // Check if product is enabled for configurator
         $enabled = get_post_meta($product_id, '_blasti_configurator_enabled', true);
         if ($enabled !== 'yes') {
             return null;
         }
-        
+
         $dimensions_json = get_post_meta($product_id, '_blasti_dimensions', true);
         $dimensions = $this->parse_dimensions($dimensions_json);
-        
+
         $compatibility_raw = get_post_meta($product_id, '_blasti_compatibility', true);
         $compatibility = $this->parse_compatibility($compatibility_raw);
-        
+
         $categories = wp_get_post_terms($product_id, 'product_cat', array('fields' => 'names'));
-        
-        return array(
+
+        // NEW: Get enhanced data fields
+        $dimensions_v2_json = get_post_meta($product_id, '_blasti_dimensions_v2', true);
+        $dimensions_v2 = !empty($dimensions_v2_json) ? json_decode($dimensions_v2_json, true) : null;
+
+        $peg_config_json = get_post_meta($product_id, '_blasti_peg_config', true);
+        $peg_config = !empty($peg_config_json) ? json_decode($peg_config_json, true) : null;
+
+        $peg_holes_json = get_post_meta($product_id, '_blasti_peg_holes', true);
+        $peg_holes = !empty($peg_holes_json) ? json_decode($peg_holes_json, true) : null;
+
+        $product_data = array(
             'id' => $product->get_id(),
             'name' => $product->get_name(),
             'description' => $product->get_short_description(),
@@ -843,6 +895,21 @@ class Blasti_Configurator_WooCommerce {
             'featured' => $product->is_featured(),
             'date_created' => $product->get_date_created()->date('Y-m-d H:i:s')
         );
+
+        // NEW: Add enhanced fields if available
+        if ($dimensions_v2 !== null) {
+            $product_data['dimensions_v2'] = $dimensions_v2;
+        }
+
+        if ($peg_config !== null) {
+            $product_data['peg_config'] = $peg_config;
+        }
+
+        if ($peg_holes !== null) {
+            $product_data['peg_holes'] = $peg_holes;
+        }
+
+        return $product_data;
     }
     
     /**
@@ -888,26 +955,27 @@ class Blasti_Configurator_WooCommerce {
      */
     public function add_product_fields() {
         global $post;
-        
+
         echo '<div class="options_group">';
-        
+
         // Enable configurator checkbox
         woocommerce_wp_checkbox(array(
             'id' => '_blasti_configurator_enabled',
             'label' => __('Enable in Configurator', 'blasti-configurator'),
             'description' => __('Check this to make the product available in the 3D configurator', 'blasti-configurator')
         ));
-        
+
         // Product type select
         woocommerce_wp_select(array(
             'id' => '_blasti_product_type',
             'label' => __('Product Type', 'blasti-configurator'),
             'options' => array(
+                '' => __('Select type...', 'blasti-configurator'),
                 'pegboard' => __('Pegboard', 'blasti-configurator'),
                 'accessory' => __('Accessory', 'blasti-configurator')
             )
         ));
-        
+
         // 3D Model URL
         woocommerce_wp_text_input(array(
             'id' => '_blasti_model_url',
@@ -915,22 +983,148 @@ class Blasti_Configurator_WooCommerce {
             'description' => __('URL to the GLB/GLTF 3D model file', 'blasti-configurator'),
             'type' => 'url'
         ));
-        
-        // Dimensions
+
+        // Dimensions (legacy)
         woocommerce_wp_text_input(array(
             'id' => '_blasti_dimensions',
-            'label' => __('Dimensions (JSON)', 'blasti-configurator'),
-            'description' => __('Product dimensions in JSON format: {"width": 1.0, "height": 1.0, "depth": 0.1}', 'blasti-configurator')
+            'label' => __('Dimensions (JSON - Legacy)', 'blasti-configurator'),
+            'description' => __('Legacy format: {"width": 1.0, "height": 1.0, "depth": 0.1}', 'blasti-configurator')
         ));
-        
+
         // Compatibility
         woocommerce_wp_textarea_input(array(
             'id' => '_blasti_compatibility',
             'label' => __('Compatible Products', 'blasti-configurator'),
             'description' => __('Comma-separated list of compatible product IDs', 'blasti-configurator')
         ));
-        
-        echo '</div>';
+
+        echo '</div>'; // End basic fields group
+
+        // NEW: Enhanced Configuration Fields
+        echo '<div class="options_group blasti-enhanced-config">';
+        echo '<h4>' . __('Enhanced Configuration (Phase 1)', 'blasti-configurator') . '</h4>';
+
+        // Enhanced Dimensions v2
+        $dimensions_v2_value = get_post_meta($post->ID, '_blasti_dimensions_v2', true);
+        $dimensions_v2_placeholder = json_encode(array(
+            'version' => '2.0',
+            'dimensions' => array(
+                'width' => 0.22,
+                'height' => 0.44,
+                'depth' => 0.02
+            ),
+            'pegHoleGrid' => array(
+                'pattern' => 'uniform',
+                'spacing' => 0.0254,
+                'diameter' => 0.0064,
+                'depth' => 0.015,
+                'rows' => 17,
+                'cols' => 8
+            ),
+            'geometry' => array(
+                'frontFaceNormal' => array('x' => 0, 'y' => 0, 'z' => 1),
+                'initialRotation' => array('x' => 0, 'y' => 0, 'z' => 0)
+            )
+        ), JSON_PRETTY_PRINT);
+
+        woocommerce_wp_textarea_input(array(
+            'id' => '_blasti_dimensions_v2',
+            'label' => __('Enhanced Dimensions (v2)', 'blasti-configurator'),
+            'description' => __('Enhanced dimensions with peg hole grid data (for pegboards). See TECHNICAL_PLAN.md for schema.', 'blasti-configurator'),
+            'placeholder' => $dimensions_v2_placeholder,
+            'value' => $dimensions_v2_value,
+            'style' => 'width: 100%; height: 200px; font-family: monospace; font-size: 12px;'
+        ));
+
+        // Peg Configuration (for accessories)
+        $peg_config_value = get_post_meta($post->ID, '_blasti_peg_config', true);
+        $peg_config_placeholder = json_encode(array(
+            'pegCount' => 2,
+            'pegs' => array(
+                array(
+                    'id' => 'peg_0',
+                    'localPosition' => array('x' => 0, 'y' => 0.0254, 'z' => 0),
+                    'diameter' => 0.006,
+                    'length' => 0.012,
+                    'insertionDirection' => array('x' => 0, 'y' => 0, 'z' => -1)
+                ),
+                array(
+                    'id' => 'peg_1',
+                    'localPosition' => array('x' => 0, 'y' => -0.0254, 'z' => 0),
+                    'diameter' => 0.006,
+                    'length' => 0.012,
+                    'insertionDirection' => array('x' => 0, 'y' => 0, 'z' => -1)
+                )
+            ),
+            'mounting' => array(
+                'surface' => 'back',
+                'surfaceOffset' => 0.002,
+                'flushOffset' => 0.001,
+                'requiresAllPegs' => true,
+                'allowableRotations' => array(0)
+            )
+        ), JSON_PRETTY_PRINT);
+
+        echo '<p class="form-field _blasti_peg_config_field">';
+        echo '<label for="_blasti_peg_config">' . __('Peg Configuration (Accessories)', 'blasti-configurator') . '</label>';
+        echo '<textarea id="_blasti_peg_config" name="_blasti_peg_config" style="width: 100%; height: 250px; font-family: monospace; font-size: 12px;" placeholder="' . esc_attr($peg_config_placeholder) . '">' . esc_textarea($peg_config_value) . '</textarea>';
+        echo '<span class="description">' . __('Peg configuration for accessories. Defines peg positions, dimensions, and mounting requirements. See SETUP_GUIDE.md for details.', 'blasti-configurator') . '</span>';
+        echo '</p>';
+
+        // Peg Holes (for pegboards - actual hole positions)
+        $peg_holes_value = get_post_meta($post->ID, '_blasti_peg_holes', true);
+        $peg_holes_placeholder = json_encode(array(
+            array('x' => 0, 'y' => 0, 'z' => 0),
+            array('x' => 0.0254, 'y' => 0, 'z' => 0),
+            array('x' => 0.0508, 'y' => 0, 'z' => 0)
+        ), JSON_PRETTY_PRINT);
+
+        echo '<p class="form-field _blasti_peg_holes_field">';
+        echo '<label for="_blasti_peg_holes">' . __('Peg Hole Positions (Pegboards)', 'blasti-configurator') . '</label>';
+        echo '<textarea id="_blasti_peg_holes" name="_blasti_peg_holes" style="width: 100%; height: 150px; font-family: monospace; font-size: 12px;" placeholder="' . esc_attr($peg_holes_placeholder) . '">' . esc_textarea($peg_holes_value) . '</textarea>';
+        echo '<span class="description">' . __('Actual peg hole positions for pegboards (JSON array). Can be auto-generated from Enhanced Dimensions grid or manually specified.', 'blasti-configurator') . '</span>';
+        echo '</p>';
+
+        echo '</div>'; // End enhanced config group
+
+        // Add JavaScript to show/hide fields based on product type
+        ?>
+        <script type="text/javascript">
+        jQuery(document).ready(function($) {
+            var $productType = $('#_blasti_product_type');
+            var $pegConfig = $('._blasti_peg_config_field').closest('p');
+            var $pegHoles = $('._blasti_peg_holes_field').closest('p');
+            var $dimensionsV2 = $('#_blasti_dimensions_v2').closest('p');
+
+            function toggleFieldsByType() {
+                var type = $productType.val();
+
+                if (type === 'accessory') {
+                    // Accessories: show peg config, hide peg holes and enhanced dimensions
+                    $pegConfig.show();
+                    $pegHoles.hide();
+                    $dimensionsV2.hide();
+                } else if (type === 'pegboard') {
+                    // Pegboards: show enhanced dimensions and peg holes, hide peg config
+                    $pegConfig.hide();
+                    $pegHoles.show();
+                    $dimensionsV2.show();
+                } else {
+                    // No type selected: hide all enhanced fields
+                    $pegConfig.hide();
+                    $pegHoles.hide();
+                    $dimensionsV2.hide();
+                }
+            }
+
+            // Initial state
+            toggleFieldsByType();
+
+            // On change
+            $productType.on('change', toggleFieldsByType);
+        });
+        </script>
+        <?php
     }
     
     /**
@@ -940,27 +1134,92 @@ class Blasti_Configurator_WooCommerce {
         // Save configurator enabled
         $enabled = isset($_POST['_blasti_configurator_enabled']) ? 'yes' : 'no';
         update_post_meta($post_id, '_blasti_configurator_enabled', $enabled);
-        
+
         // Save product type
         if (isset($_POST['_blasti_product_type'])) {
             update_post_meta($post_id, '_blasti_product_type', sanitize_text_field($_POST['_blasti_product_type']));
         }
-        
+
         // Save model URL
         if (isset($_POST['_blasti_model_url'])) {
             update_post_meta($post_id, '_blasti_model_url', esc_url_raw($_POST['_blasti_model_url']));
         }
-        
-        // Save dimensions
+
+        // Save dimensions (legacy)
         if (isset($_POST['_blasti_dimensions'])) {
             update_post_meta($post_id, '_blasti_dimensions', sanitize_text_field($_POST['_blasti_dimensions']));
         }
-        
+
         // Save compatibility
         if (isset($_POST['_blasti_compatibility'])) {
             update_post_meta($post_id, '_blasti_compatibility', sanitize_text_field($_POST['_blasti_compatibility']));
         }
-        
+
+        // NEW: Save enhanced dimensions v2
+        if (isset($_POST['_blasti_dimensions_v2'])) {
+            $dimensions_v2 = wp_unslash($_POST['_blasti_dimensions_v2']);
+
+            // Validate JSON
+            $decoded = json_decode($dimensions_v2, true);
+            if (json_last_error() === JSON_ERROR_NONE) {
+                update_post_meta($post_id, '_blasti_dimensions_v2', $dimensions_v2);
+            } else {
+                // Store error for admin notice
+                add_settings_error(
+                    'blasti_configurator',
+                    'invalid_dimensions_v2',
+                    __('Invalid enhanced dimensions JSON. Please check the format.', 'blasti-configurator'),
+                    'error'
+                );
+            }
+        }
+
+        // NEW: Save peg configuration for accessories
+        if (isset($_POST['_blasti_peg_config'])) {
+            $peg_config = wp_unslash($_POST['_blasti_peg_config']);
+
+            // Validate JSON
+            $decoded = json_decode($peg_config, true);
+            if (json_last_error() === JSON_ERROR_NONE) {
+                // Additional validation for peg config structure
+                if (isset($decoded['pegCount']) && isset($decoded['pegs']) && is_array($decoded['pegs'])) {
+                    update_post_meta($post_id, '_blasti_peg_config', $peg_config);
+                } else {
+                    add_settings_error(
+                        'blasti_configurator',
+                        'invalid_peg_config_structure',
+                        __('Peg configuration must include "pegCount" and "pegs" array.', 'blasti-configurator'),
+                        'error'
+                    );
+                }
+            } else {
+                add_settings_error(
+                    'blasti_configurator',
+                    'invalid_peg_config',
+                    __('Invalid peg configuration JSON. Please check the format.', 'blasti-configurator'),
+                    'error'
+                );
+            }
+        }
+
+        // NEW: Save peg holes data for pegboards
+        if (isset($_POST['_blasti_peg_holes'])) {
+            $peg_holes = wp_unslash($_POST['_blasti_peg_holes']);
+
+            // Validate JSON
+            $decoded = json_decode($peg_holes, true);
+            if (json_last_error() === JSON_ERROR_NONE && is_array($decoded)) {
+                update_post_meta($post_id, '_blasti_peg_holes', $peg_holes);
+            } else {
+                add_settings_error(
+                    'blasti_configurator',
+                    'invalid_peg_holes',
+                    __('Invalid peg holes JSON. Must be a valid JSON array.', 'blasti-configurator'),
+                    'error'
+                );
+            }
+        }
+
         // Clear product cache when product is updated
         $this->clear_product_cache();
     }

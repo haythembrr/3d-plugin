@@ -38,23 +38,28 @@ class Blasti_Configurator_Admin {
     private function init_hooks() {
         // Add admin menu
         add_action('admin_menu', array($this, 'add_admin_menu'));
-        
+
         // Register settings
         add_action('admin_init', array($this, 'register_settings'));
-        
+
         // Enqueue admin assets
         add_action('admin_enqueue_scripts', array($this, 'enqueue_admin_assets'));
-        
+
         // Add plugin action links
         add_filter('plugin_action_links_' . BLASTI_CONFIGURATOR_PLUGIN_BASENAME, array($this, 'add_action_links'));
-        
+
         // Add capability checks to admin pages
         add_action('admin_init', array($this, 'admin_init_capability_checks'));
-        
+
         // Add AJAX handlers for admin functionality
         add_action('wp_ajax_blasti_save_settings', array($this, 'ajax_save_settings'));
         add_action('wp_ajax_blasti_upload_model', array($this, 'ajax_upload_model'));
         add_action('wp_ajax_blasti_get_stats', array($this, 'ajax_get_stats'));
+
+        // NEW: Phase 1 migration AJAX handlers
+        add_action('wp_ajax_blasti_run_migration', array($this, 'ajax_run_migration'));
+        add_action('wp_ajax_blasti_get_migration_status', array($this, 'ajax_get_migration_status'));
+        add_action('wp_ajax_blasti_rollback_migration', array($this, 'ajax_rollback_migration'));
     }
     
     /**
@@ -90,6 +95,16 @@ class Blasti_Configurator_Admin {
             'manage_options',
             'blasti-configurator-models',
             array($this, 'models_page')
+        );
+
+        // NEW: Phase 1 Data Migration submenu
+        add_submenu_page(
+            'blasti-configurator',
+            __('Data Migration', 'blasti-configurator'),
+            __('Data Migration', 'blasti-configurator'),
+            'manage_options',
+            'blasti-configurator-migration',
+            array($this, 'migration_page')
         );
     }
     
@@ -305,8 +320,235 @@ class Blasti_Configurator_Admin {
         if (!current_user_can('manage_options')) {
             wp_die(__('You do not have sufficient permissions to access this page.', 'blasti-configurator'));
         }
-        
+
         include BLASTI_CONFIGURATOR_PLUGIN_DIR . 'templates/admin-models.php';
+    }
+
+    /**
+     * Migration page for Phase 1: Data Model Enhancement
+     * NEW: Requirement 9.3: Add capability checks for admin access
+     */
+    public function migration_page() {
+        // Check user capabilities
+        if (!current_user_can('manage_options')) {
+            wp_die(__('You do not have sufficient permissions to access this page.', 'blasti-configurator'));
+        }
+
+        // Get migration instance
+        $migration = Blasti_Configurator_Migration::get_instance();
+        $status = $migration->get_migration_status();
+
+        ?>
+        <div class="wrap">
+            <h1><?php echo esc_html__('Phase 1: Data Migration', 'blasti-configurator'); ?></h1>
+
+            <div class="notice notice-info">
+                <p><strong><?php _e('About Phase 1 Migration:', 'blasti-configurator'); ?></strong></p>
+                <p><?php _e('This migration upgrades your product data to the enhanced Phase 1 schema, which includes:', 'blasti-configurator'); ?></p>
+                <ul style="margin-left: 20px;">
+                    <li><?php _e('Enhanced dimensions with peg hole grid data for pegboards', 'blasti-configurator'); ?></li>
+                    <li><?php _e('Peg configuration data for accessories (positions, dimensions, mounting)', 'blasti-configurator'); ?></li>
+                    <li><?php _e('Actual peg hole positions for pegboards', 'blasti-configurator'); ?></li>
+                </ul>
+                <p><?php _e('This is a non-destructive migration - legacy data will be preserved.', 'blasti-configurator'); ?></p>
+            </div>
+
+            <div class="card" style="max-width: 800px; margin-top: 20px;">
+                <h2><?php _e('Migration Status', 'blasti-configurator'); ?></h2>
+
+                <table class="widefat striped">
+                    <tbody>
+                        <tr>
+                            <th style="width: 50%;"><?php _e('Total Configurator Products', 'blasti-configurator'); ?></th>
+                            <td><strong><?php echo esc_html($status['total_products']); ?></strong></td>
+                        </tr>
+                        <tr>
+                            <th><?php _e('Products Migrated', 'blasti-configurator'); ?></th>
+                            <td><strong><?php echo esc_html($status['migrated_products']); ?></strong></td>
+                        </tr>
+                        <tr>
+                            <th><?php _e('Products Pending Migration', 'blasti-configurator'); ?></th>
+                            <td><strong><?php echo esc_html($status['pending_migration']); ?></strong></td>
+                        </tr>
+                        <tr>
+                            <th><?php _e('Migration Status', 'blasti-configurator'); ?></th>
+                            <td>
+                                <?php if ($status['migration_complete']): ?>
+                                    <span class="dashicons dashicons-yes-alt" style="color: green;"></span>
+                                    <strong style="color: green;"><?php _e('Complete', 'blasti-configurator'); ?></strong>
+                                <?php else: ?>
+                                    <span class="dashicons dashicons-warning" style="color: orange;"></span>
+                                    <strong style="color: orange;"><?php _e('Pending', 'blasti-configurator'); ?></strong>
+                                <?php endif; ?>
+                            </td>
+                        </tr>
+                    </tbody>
+                </table>
+
+                <div style="margin-top: 20px;">
+                    <?php if (!$status['migration_complete']): ?>
+                        <button type="button" id="run-migration-btn" class="button button-primary button-hero">
+                            <span class="dashicons dashicons-update"></span>
+                            <?php _e('Run Migration', 'blasti-configurator'); ?>
+                        </button>
+                        <p class="description">
+                            <?php _e('This will migrate all products that have not yet been upgraded to the Phase 1 schema.', 'blasti-configurator'); ?>
+                        </p>
+                    <?php else: ?>
+                        <p style="color: green;">
+                            <span class="dashicons dashicons-yes-alt"></span>
+                            <?php _e('All products have been migrated to the Phase 1 schema.', 'blasti-configurator'); ?>
+                        </p>
+                    <?php endif; ?>
+
+                    <?php if ($status['migrated_products'] > 0): ?>
+                        <hr style="margin: 20px 0;">
+                        <button type="button" id="rollback-migration-btn" class="button button-secondary">
+                            <span class="dashicons dashicons-undo"></span>
+                            <?php _e('Rollback Migration', 'blasti-configurator'); ?>
+                        </button>
+                        <p class="description">
+                            <?php _e('This will remove all Phase 1 enhanced data and revert to the legacy schema. Use with caution.', 'blasti-configurator'); ?>
+                        </p>
+                    <?php endif; ?>
+                </div>
+
+                <div id="migration-results" style="margin-top: 20px; display: none;">
+                    <h3><?php _e('Migration Results', 'blasti-configurator'); ?></h3>
+                    <div id="migration-results-content"></div>
+                </div>
+            </div>
+        </div>
+
+        <style>
+            .migration-result-success {
+                padding: 10px;
+                background: #d4edda;
+                border: 1px solid #c3e6cb;
+                border-radius: 4px;
+                color: #155724;
+                margin-bottom: 10px;
+            }
+            .migration-result-error {
+                padding: 10px;
+                background: #f8d7da;
+                border: 1px solid #f5c6cb;
+                border-radius: 4px;
+                color: #721c24;
+                margin-bottom: 10px;
+            }
+            .migration-progress {
+                padding: 10px;
+                background: #d1ecf1;
+                border: 1px solid #bee5eb;
+                border-radius: 4px;
+                color: #0c5460;
+                margin-bottom: 10px;
+            }
+        </style>
+
+        <script type="text/javascript">
+        jQuery(document).ready(function($) {
+            var $runBtn = $('#run-migration-btn');
+            var $rollbackBtn = $('#rollback-migration-btn');
+            var $results = $('#migration-results');
+            var $resultsContent = $('#migration-results-content');
+
+            $runBtn.on('click', function() {
+                if (!confirm('<?php echo esc_js(__('Are you sure you want to run the migration? This will update product data.', 'blasti-configurator')); ?>')) {
+                    return;
+                }
+
+                $runBtn.prop('disabled', true).text('<?php echo esc_js(__('Running migration...', 'blasti-configurator')); ?>');
+                $results.show();
+                $resultsContent.html('<div class="migration-progress"><span class="dashicons dashicons-update"></span> <?php echo esc_js(__('Migration in progress...', 'blasti-configurator')); ?></div>');
+
+                $.ajax({
+                    url: ajaxurl,
+                    type: 'POST',
+                    data: {
+                        action: 'blasti_run_migration',
+                        nonce: '<?php echo wp_create_nonce('blasti_migration_nonce'); ?>'
+                    },
+                    success: function(response) {
+                        if (response.success) {
+                            var result = response.data;
+                            var html = '<div class="migration-result-success">';
+                            html += '<h4>' + result.message + '</h4>';
+                            html += '<p><strong><?php echo esc_js(__('Succeeded:', 'blasti-configurator')); ?></strong> ' + result.success + '</p>';
+                            html += '<p><strong><?php echo esc_js(__('Failed:', 'blasti-configurator')); ?></strong> ' + result.failed + '</p>';
+                            html += '<p><strong><?php echo esc_js(__('Skipped:', 'blasti-configurator')); ?></strong> ' + result.skipped + '</p>';
+
+                            if (result.migrated_products && result.migrated_products.length > 0) {
+                                html += '<h5><?php echo esc_js(__('Migrated Products:', 'blasti-configurator')); ?></h5><ul>';
+                                $.each(result.migrated_products, function(i, product) {
+                                    html += '<li>' + product.name + ' (ID: ' + product.id + ', Type: ' + product.type + ')</li>';
+                                });
+                                html += '</ul>';
+                            }
+
+                            if (result.errors && result.errors.length > 0) {
+                                html += '<h5 style="color: #721c24;"><?php echo esc_js(__('Errors:', 'blasti-configurator')); ?></h5><ul>';
+                                $.each(result.errors, function(i, error) {
+                                    html += '<li>' + error.product_name + ' (ID: ' + error.product_id + '): ' + error.error + '</li>';
+                                });
+                                html += '</ul>';
+                            }
+
+                            html += '</div>';
+                            $resultsContent.html(html);
+
+                            setTimeout(function() {
+                                location.reload();
+                            }, 3000);
+                        } else {
+                            $resultsContent.html('<div class="migration-result-error"><?php echo esc_js(__('Migration failed:', 'blasti-configurator')); ?> ' + (response.data.message || '<?php echo esc_js(__('Unknown error', 'blasti-configurator')); ?>') + '</div>');
+                            $runBtn.prop('disabled', false).text('<?php echo esc_js(__('Run Migration', 'blasti-configurator')); ?>');
+                        }
+                    },
+                    error: function() {
+                        $resultsContent.html('<div class="migration-result-error"><?php echo esc_js(__('An error occurred during migration.', 'blasti-configurator')); ?></div>');
+                        $runBtn.prop('disabled', false).text('<?php echo esc_js(__('Run Migration', 'blasti-configurator')); ?>');
+                    }
+                });
+            });
+
+            $rollbackBtn.on('click', function() {
+                if (!confirm('<?php echo esc_js(__('Are you sure you want to rollback the migration? This will remove all Phase 1 enhanced data.', 'blasti-configurator')); ?>')) {
+                    return;
+                }
+
+                $rollbackBtn.prop('disabled', true).text('<?php echo esc_js(__('Rolling back...', 'blasti-configurator')); ?>');
+                $results.show();
+                $resultsContent.html('<div class="migration-progress"><span class="dashicons dashicons-update"></span> <?php echo esc_js(__('Rollback in progress...', 'blasti-configurator')); ?></div>');
+
+                $.ajax({
+                    url: ajaxurl,
+                    type: 'POST',
+                    data: {
+                        action: 'blasti_rollback_migration',
+                        nonce: '<?php echo wp_create_nonce('blasti_migration_nonce'); ?>'
+                    },
+                    success: function(response) {
+                        if (response.success) {
+                            $resultsContent.html('<div class="migration-result-success">' + response.data.message + '</div>');
+                            setTimeout(function() {
+                                location.reload();
+                            }, 2000);
+                        } else {
+                            $resultsContent.html('<div class="migration-result-error"><?php echo esc_js(__('Rollback failed:', 'blasti-configurator')); ?> ' + (response.data.message || '<?php echo esc_js(__('Unknown error', 'blasti-configurator')); ?>') + '</div>');
+                            $rollbackBtn.prop('disabled', false).text('<?php echo esc_js(__('Rollback Migration', 'blasti-configurator')); ?>');
+                        }
+                    },
+                    error: function() {
+                        $resultsContent.html('<div class="migration-result-error"><?php echo esc_js(__('An error occurred during rollback.', 'blasti-configurator')); ?></div>');
+                        $rollbackBtn.prop('disabled', false).text('<?php echo esc_js(__('Rollback Migration', 'blasti-configurator')); ?>');
+                    }
+                });
+            });
+        });
+        </script>
+        <?php
     }
     
     /**
@@ -568,14 +810,104 @@ class Blasti_Configurator_Admin {
         if (!wp_verify_nonce($_POST['nonce'], 'blasti_admin_nonce') || !current_user_can('manage_options')) {
             wp_die('Security check failed');
         }
-        
+
         $stats = array(
             'pegboards' => $this->get_pegboard_count(),
             'accessories' => $this->get_accessory_count(),
             'configurations' => $this->get_configuration_count(),
             'cart_additions' => $this->get_cart_additions_count()
         );
-        
+
         wp_send_json_success($stats);
+    }
+
+    /**
+     * AJAX handler for running Phase 1 migration
+     * NEW: Phase 1 Data Model Enhancement
+     */
+    public function ajax_run_migration() {
+        // Verify nonce and capabilities
+        if (!wp_verify_nonce($_POST['nonce'], 'blasti_migration_nonce') || !current_user_can('manage_options')) {
+            wp_send_json_error(array(
+                'message' => __('Security check failed', 'blasti-configurator')
+            ));
+        }
+
+        try {
+            $migration = Blasti_Configurator_Migration::get_instance();
+            $results = $migration->migrate_to_v2();
+
+            // Log activity
+            $this->log_activity(
+                sprintf(__('Phase 1 migration completed: %d products migrated', 'blasti-configurator'), $results['success']),
+                'dashicons-update'
+            );
+
+            wp_send_json_success($results);
+
+        } catch (Exception $e) {
+            error_log('Blasti Configurator Migration Error: ' . $e->getMessage());
+            wp_send_json_error(array(
+                'message' => __('Migration failed: ', 'blasti-configurator') . $e->getMessage()
+            ));
+        }
+    }
+
+    /**
+     * AJAX handler for getting migration status
+     * NEW: Phase 1 Data Model Enhancement
+     */
+    public function ajax_get_migration_status() {
+        // Verify nonce and capabilities
+        if (!wp_verify_nonce($_POST['nonce'], 'blasti_migration_nonce') || !current_user_can('manage_options')) {
+            wp_send_json_error(array(
+                'message' => __('Security check failed', 'blasti-configurator')
+            ));
+        }
+
+        try {
+            $migration = Blasti_Configurator_Migration::get_instance();
+            $status = $migration->get_migration_status();
+
+            wp_send_json_success($status);
+
+        } catch (Exception $e) {
+            error_log('Blasti Configurator Migration Status Error: ' . $e->getMessage());
+            wp_send_json_error(array(
+                'message' => __('Failed to get migration status: ', 'blasti-configurator') . $e->getMessage()
+            ));
+        }
+    }
+
+    /**
+     * AJAX handler for rolling back Phase 1 migration
+     * NEW: Phase 1 Data Model Enhancement
+     */
+    public function ajax_rollback_migration() {
+        // Verify nonce and capabilities
+        if (!wp_verify_nonce($_POST['nonce'], 'blasti_migration_nonce') || !current_user_can('manage_options')) {
+            wp_send_json_error(array(
+                'message' => __('Security check failed', 'blasti-configurator')
+            ));
+        }
+
+        try {
+            $migration = Blasti_Configurator_Migration::get_instance();
+            $results = $migration->rollback_all();
+
+            // Log activity
+            $this->log_activity(
+                sprintf(__('Phase 1 migration rolled back: %d products reverted', 'blasti-configurator'), $results['success']),
+                'dashicons-undo'
+            );
+
+            wp_send_json_success($results);
+
+        } catch (Exception $e) {
+            error_log('Blasti Configurator Migration Rollback Error: ' . $e->getMessage());
+            wp_send_json_error(array(
+                'message' => __('Rollback failed: ', 'blasti-configurator') . $e->getMessage()
+            ));
+        }
     }
 }

@@ -97,6 +97,9 @@ class Blasti_Configurator {
         require_once BLASTI_CONFIGURATOR_PLUGIN_DIR . 'includes/class-admin.php';
         require_once BLASTI_CONFIGURATOR_PLUGIN_DIR . 'includes/class-shortcode.php';
         require_once BLASTI_CONFIGURATOR_PLUGIN_DIR . 'includes/class-woocommerce.php';
+
+        // NEW: Phase 1 Data Migration
+        require_once BLASTI_CONFIGURATOR_PLUGIN_DIR . 'includes/class-migration.php';
     }
     
     /**

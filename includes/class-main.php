@@ -179,10 +179,19 @@ class Blasti_Configurator_Main {
             true
         );
 
+        // NEW: Phase 3 - Debug Visualization
+        wp_enqueue_script(
+            'blasti-debug-viz',
+            BLASTI_CONFIGURATOR_PLUGIN_URL . 'assets/js/modules/debug-viz.js',
+            array('threejs', 'blasti-core', 'blasti-peg-system'),
+            BLASTI_CONFIGURATOR_VERSION,
+            true
+        );
+
         wp_enqueue_script(
             'blasti-configurator',
             BLASTI_CONFIGURATOR_PLUGIN_URL . 'assets/js/configurator.js',
-            array('blasti-core', 'blasti-models', 'blasti-ui', 'blasti-cart', 'blasti-memory-manager', 'blasti-peg-system'),
+            array('blasti-core', 'blasti-models', 'blasti-ui', 'blasti-cart', 'blasti-memory-manager', 'blasti-peg-system', 'blasti-debug-viz'),
             BLASTI_CONFIGURATOR_VERSION,
             true
         );

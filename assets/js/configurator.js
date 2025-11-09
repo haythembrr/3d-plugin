@@ -76,7 +76,7 @@
 
         // Check for required dependencies
         checkDependencies: function () {
-            const required = ['BlastiCore', 'BlastiModels', 'BlastiUI', 'BlastiCart', 'BlastiMemoryManager', 'BlastiPegSystem'];
+            const required = ['BlastiCore', 'BlastiModels', 'BlastiUI', 'BlastiCart', 'BlastiMemoryManager', 'BlastiPegSystem', 'BlastiDebugViz'];
             const missing = [];
 
             required.forEach(dep => {
@@ -129,6 +129,16 @@
             // NEW: Phase 2 - Initialize Peg System
             this.config.modules.pegSystem = BlastiPegSystem;
             console.log('✅ Peg system initialized');
+
+            // NEW: Phase 3 - Initialize Debug Visualization
+            this.config.modules.debugViz = BlastiDebugViz;
+
+            // Check URL parameter for debug mode activation
+            const urlParams = new URLSearchParams(window.location.search);
+            if (urlParams.get('debug') === 'true' || urlParams.get('debug') === '1') {
+                BlastiDebugViz.enable();
+                console.log('🐛 Debug mode enabled via URL parameter');
+            }
 
             console.log('✅ All modules initialized');
         },
@@ -226,6 +236,21 @@
 
                         // Initialize grid system (Phase 2: uses enhanced data)
                         this.initializeGridSystem(pegboard);
+
+                        // NEW: Phase 3 - Debug visualization
+                        if (this.config.modules.debugViz && this.config.modules.debugViz.enabled) {
+                            const scene = this.config.modules.core.config.scene;
+                            const metadata = model.userData.pegboardMetadata;
+
+                            // Clear previous debug visualizations
+                            this.config.modules.debugViz.clearDebug(scene);
+
+                            // Show peg holes (red spheres)
+                            this.config.modules.debugViz.showPegHoles(scene, metadata.pegHoles);
+
+                            // Show flush mounting plane (blue transparent plane)
+                            this.config.modules.debugViz.showFlushPlane(scene, model);
+                        }
 
                         // Focus camera on pegboard with proper framing
                         this.config.modules.core.focusOnObject(model);
@@ -650,6 +675,32 @@
                 );
             }
 
+            // NEW: Phase 3 - Debug visualization
+            if (this.config.modules.debugViz && this.config.modules.debugViz.enabled) {
+                const scene = this.config.modules.core.config.scene;
+
+                // Show accessory peg positions (green spheres)
+                if (snapResult.pegConfig) {
+                    this.config.modules.debugViz.showPegPositions(
+                        scene,
+                        model,
+                        snapResult.pegConfig
+                    );
+                }
+
+                // Show occupied holes (yellow spheres) - refresh all
+                const pegboardMeta = this.config.currentPegboardModel.userData.pegboardMetadata;
+                this.config.modules.debugViz.clearDebugType(scene, 'occupied-hole');
+                this.config.modules.debugViz.showOccupiedHoles(
+                    scene,
+                    this.config.pegHoleOccupancy,
+                    pegboardMeta.pegHoles
+                );
+
+                // Log snap result
+                this.config.modules.debugViz.logSnapResult(snapResult);
+            }
+
             // Store in placed accessories
             this.config.placedAccessories.push(accessoryData);
 
@@ -711,6 +762,22 @@
                         this.config.pegHoleOccupancy
                     );
                     console.log(`🔓 Freed ${accessory.occupiedHoles.length} peg holes from ${accessory.name}`);
+
+                    // NEW: Phase 3 - Update debug visualization for occupied holes
+                    if (this.config.modules.debugViz && this.config.modules.debugViz.enabled) {
+                        const scene = this.config.modules.core.config.scene;
+                        const pegboardMeta = this.config.currentPegboardModel?.userData.pegboardMetadata;
+
+                        if (pegboardMeta) {
+                            // Clear and refresh occupied holes visualization
+                            this.config.modules.debugViz.clearDebugType(scene, 'occupied-hole');
+                            this.config.modules.debugViz.showOccupiedHoles(
+                                scene,
+                                this.config.pegHoleOccupancy,
+                                pegboardMeta.pegHoles
+                            );
+                        }
+                    }
                 }
 
                 // Remove from scene
@@ -1284,6 +1351,214 @@
                 validation: validation,
                 pegConfig: pegConfig
             };
+        },
+
+        /**
+         * NEW: Phase 3 - Snap accessory to grid with rotation support
+         * Tests multiple rotation angles and returns all valid configurations
+         *
+         * @param {Object} accessory - Accessory data with peg configuration
+         * @param {THREE.Vector3} mousePosition - Mouse click position
+         * @returns {Array} Array of valid snap configurations with different rotations
+         */
+        snapAccessoryToGridWithRotation: function(accessory, mousePosition) {
+            if (!this.config.gridSystem || !this.config.gridSystem.enabled) {
+                return [];
+            }
+
+            if (!this.config.currentPegboardModel || !this.config.currentPegboardModel.userData.pegboardMetadata) {
+                console.warn('⚠️ No pegboard metadata available');
+                return [];
+            }
+
+            const pegConfig = accessory.peg_config || accessory.pegConfig;
+
+            if (!pegConfig || !pegConfig.pegs || pegConfig.pegs.length === 0) {
+                console.warn('⚠️ No peg configuration for accessory:', accessory.name);
+                // Fallback to single rotation snap
+                const singleResult = this.snapAccessoryToGrid(accessory, mousePosition);
+                return singleResult.valid ? [singleResult] : [];
+            }
+
+            const pegboardMeta = this.config.currentPegboardModel.userData.pegboardMetadata;
+            const pegSystem = this.config.modules.pegSystem;
+            const validConfigurations = [];
+
+            // Get allowable rotations from peg config (default to [0] if not specified)
+            const allowableRotations = pegConfig.mounting?.allowableRotations || [0];
+
+            console.log(`🔄 Testing ${allowableRotations.length} rotation angles for ${accessory.name}`);
+
+            // Find closest hole to mouse position
+            const closestHole = pegSystem.findClosestHole(mousePosition, pegboardMeta.pegHoles);
+
+            if (!closestHole) {
+                return [];
+            }
+
+            // Test each allowed rotation
+            for (let angleDeg of allowableRotations) {
+                const angleRad = (angleDeg * Math.PI) / 180;
+
+                // Find compatible peg holes with this rotation
+                const holeGroups = pegSystem.findCompatiblePegHolesWithRotation(
+                    pegConfig,
+                    pegboardMeta.pegHoles,
+                    closestHole,
+                    angleRad
+                );
+
+                if (holeGroups.length === 0) {
+                    continue;
+                }
+
+                // Test each hole group
+                for (let holeGroup of holeGroups) {
+                    // Check if holes are occupied
+                    if (pegSystem.checkHolesOccupied(holeGroup, this.config.pegHoleOccupancy)) {
+                        continue;
+                    }
+
+                    // Validate peg placement
+                    const validation = pegSystem.validatePegPlacement(
+                        pegConfig,
+                        holeGroup,
+                        pegboardMeta
+                    );
+
+                    if (!validation.valid) {
+                        continue;
+                    }
+
+                    // Calculate accessory position with rotation
+                    const position = pegSystem.calculateAccessoryPositionFromPegs(
+                        pegConfig,
+                        holeGroup,
+                        angleRad
+                    );
+
+                    // Calculate flush Z position
+                    position.z = pegSystem.calculateFlushZ(pegConfig, pegboardMeta);
+
+                    // Valid configuration found
+                    validConfigurations.push({
+                        valid: true,
+                        position: position,
+                        rotation: new THREE.Euler(0, 0, angleRad),
+                        rotationDegrees: angleDeg,
+                        occupiedHoles: holeGroup,
+                        validation: validation,
+                        pegConfig: pegConfig
+                    });
+                }
+            }
+
+            console.log(`✅ Found ${validConfigurations.length} valid configurations with rotation`);
+
+            return validConfigurations;
+        },
+
+        /**
+         * NEW: Phase 3 - Select best configuration from multiple valid options
+         * Prefers upright orientation (0°) and configurations closest to mouse click
+         *
+         * @param {Array} configurations - Array of valid snap configurations
+         * @param {THREE.Vector3} mousePosition - Original mouse click position
+         * @returns {Object|null} Best configuration or null
+         */
+        selectBestConfiguration: function(configurations, mousePosition) {
+            if (!configurations || configurations.length === 0) {
+                return null;
+            }
+
+            if (configurations.length === 1) {
+                return configurations[0];
+            }
+
+            // Scoring system:
+            // - Prefer upright orientation (0°) - weight: 10
+            // - Prefer closer to mouse click - weight: 5
+            let bestConfig = null;
+            let bestScore = -Infinity;
+
+            for (let config of configurations) {
+                let score = 0;
+
+                // Rotation preference (prefer 0°)
+                const rotationScore = 10 * (1 - Math.abs(config.rotationDegrees) / 180);
+                score += rotationScore;
+
+                // Distance to mouse click
+                const distance = config.position.distanceTo(mousePosition);
+                const distanceScore = 5 * Math.max(0, 1 - distance);
+                score += distanceScore;
+
+                if (score > bestScore) {
+                    bestScore = score;
+                    bestConfig = config;
+                }
+            }
+
+            console.log(`🎯 Selected best configuration: rotation=${bestConfig.rotationDegrees}°, score=${bestScore.toFixed(2)}`);
+
+            return bestConfig;
+        },
+
+        /**
+         * NEW: Phase 3 - Apply precise positioning to accessory model
+         * Stores placement metadata and applies geometric transformations
+         *
+         * @param {THREE.Object3D} accessoryModel - The 3D model to position
+         * @param {Object} snapResult - Snap result with position and rotation
+         * @param {Object} accessoryData - Accessory product data
+         */
+        applyPrecisePositioning: function(accessoryModel, snapResult, accessoryData) {
+            if (!accessoryModel || !snapResult || !snapResult.valid) {
+                console.error('❌ Cannot apply positioning: invalid parameters');
+                return;
+            }
+
+            // Apply position
+            accessoryModel.position.copy(snapResult.position);
+
+            // Apply rotation
+            if (snapResult.rotation) {
+                accessoryModel.rotation.copy(snapResult.rotation);
+            }
+
+            // Store placement metadata on model
+            accessoryModel.userData.placementMetadata = {
+                snapMethod: 'precise-peg-system',
+                pegConfig: snapResult.pegConfig,
+                occupiedHoles: snapResult.occupiedHoles,
+                validation: snapResult.validation,
+                position: {
+                    x: snapResult.position.x,
+                    y: snapResult.position.y,
+                    z: snapResult.position.z
+                },
+                rotation: {
+                    x: accessoryModel.rotation.x,
+                    y: accessoryModel.rotation.y,
+                    z: accessoryModel.rotation.z
+                },
+                rotationDegrees: snapResult.rotationDegrees || 0,
+                flushMounted: true,
+                timestamp: Date.now()
+            };
+
+            // Update matrix
+            accessoryModel.updateMatrix();
+            accessoryModel.updateMatrixWorld(true);
+
+            console.log('🎯 Applied positioning for accessory type:', {
+                name: accessoryData.name,
+                type: accessoryData.type || 'generic',
+                position: accessoryModel.position,
+                rotation: accessoryModel.rotation,
+                flushZ: snapResult.position.z,
+                pegCount: snapResult.pegConfig?.pegCount || 1
+            });
         },
 
         // Check if position is valid for placement (Enhanced for Requirements 3.2, 3.3, 3.4)

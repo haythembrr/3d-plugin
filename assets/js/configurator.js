@@ -659,11 +659,14 @@
                 jQuery(document).trigger('accessoryPlaced', [accessoryData]);
             }
 
+            // Save accessory name before exiting placement mode
+            const accessoryName = this.config.placementMode.accessoryData.name;
+
             // Exit placement mode
             this.exitPlacementMode();
 
             console.log('✅ Accessory placed successfully with Phase 2 enhancements');
-            this.showSuccess(`${this.config.placementMode.accessoryData.name} placed successfully`);
+            this.showSuccess(`${accessoryName} placed successfully`);
         },
 
         // Enhanced exit placement mode with proper cleanup

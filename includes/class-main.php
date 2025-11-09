@@ -169,11 +169,20 @@ class Blasti_Configurator_Main {
             BLASTI_CONFIGURATOR_VERSION,
             true
         );
-        
+
+        // NEW: Phase 2 - Peg-Hole System
+        wp_enqueue_script(
+            'blasti-peg-system',
+            BLASTI_CONFIGURATOR_PLUGIN_URL . 'assets/js/modules/peg-system.js',
+            array('threejs', 'blasti-core'),
+            BLASTI_CONFIGURATOR_VERSION,
+            true
+        );
+
         wp_enqueue_script(
             'blasti-configurator',
             BLASTI_CONFIGURATOR_PLUGIN_URL . 'assets/js/configurator.js',
-            array('blasti-core', 'blasti-models', 'blasti-ui', 'blasti-cart', 'blasti-memory-manager'),
+            array('blasti-core', 'blasti-models', 'blasti-ui', 'blasti-cart', 'blasti-memory-manager', 'blasti-peg-system'),
             BLASTI_CONFIGURATOR_VERSION,
             true
         );

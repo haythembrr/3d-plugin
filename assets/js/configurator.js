@@ -16,13 +16,15 @@
                 models: null,
                 ui: null,
                 cart: null,
-                memoryManager: null
+                memoryManager: null,
+                pegSystem: null  // NEW: Phase 2 Peg System
             },
             currentPegboard: null,
             currentPegboardModel: null,
             placedAccessories: [],
             gridSystem: null,
-            placementMode: null
+            placementMode: null,
+            pegHoleOccupancy: new Map()  // NEW: Phase 2 - Track occupied peg holes
         },
 
         // Initialize the configurator
@@ -74,7 +76,7 @@
 
         // Check for required dependencies
         checkDependencies: function () {
-            const required = ['BlastiCore', 'BlastiModels', 'BlastiUI', 'BlastiCart', 'BlastiMemoryManager'];
+            const required = ['BlastiCore', 'BlastiModels', 'BlastiUI', 'BlastiCart', 'BlastiMemoryManager', 'BlastiPegSystem'];
             const missing = [];
 
             required.forEach(dep => {
@@ -123,6 +125,10 @@
             // Initialize cart
             BlastiCart.initialize();
             this.config.modules.cart = BlastiCart;
+
+            // NEW: Phase 2 - Initialize Peg System
+            this.config.modules.pegSystem = BlastiPegSystem;
+            console.log('✅ Peg system initialized');
 
             console.log('✅ All modules initialized');
         },
@@ -191,11 +197,14 @@
 
             this.config.currentPegboard = pegboard;
 
-            // Clear existing pegboard model
+            // Clear existing pegboard model and occupancy
             if (this.config.currentPegboardModel) {
                 this.config.modules.core.removeFromScene(this.config.currentPegboardModel);
                 this.config.currentPegboardModel = null;
             }
+
+            // Clear peg hole occupancy when switching pegboards
+            this.config.pegHoleOccupancy.clear();
 
             // Load pegboard 3D model
             if (pegboard.model_url) {
@@ -209,11 +218,14 @@
                         // Position and scale model
                         this.positionPegboardModel(model, pegboard.dimensions);
 
+                        // NEW: Phase 2 - Store pegboard metadata on model for peg system
+                        model.userData.pegboardMetadata = this.preparePegboardMetadata(pegboard);
+
                         // Add to scene
                         this.config.modules.core.addToScene(model);
 
-                        // Initialize grid system
-                        this.initializeGridSystem(pegboard.dimensions);
+                        // Initialize grid system (Phase 2: uses enhanced data)
+                        this.initializeGridSystem(pegboard);
 
                         // Focus camera on pegboard with proper framing
                         this.config.modules.core.focusOnObject(model);
@@ -223,13 +235,80 @@
                             this.config.modules.core.setCameraView('isometric');
                         }, 500);
 
-                        console.log('🎯 Pegboard setup complete');
+                        console.log('🎯 Pegboard setup complete with Phase 2 enhancements');
                     })
                     .catch(error => {
                         console.error('❌ Failed to load pegboard model:', error);
                         this.showError('Failed to load pegboard model');
                     });
             }
+        },
+
+        // NEW: Phase 2 - Prepare pegboard metadata for peg system
+        preparePegboardMetadata: function(pegboard) {
+            const metadata = {
+                id: pegboard.id,
+                name: pegboard.name,
+                dimensions: pegboard.dimensions || {},
+                pegHoles: [],
+                pegHoleGrid: {},
+                geometry: {}
+            };
+
+            // Use enhanced dimensions_v2 if available (Phase 1 data)
+            if (pegboard.dimensions_v2) {
+                metadata.dimensions = pegboard.dimensions_v2.dimensions || metadata.dimensions;
+                metadata.pegHoleGrid = pegboard.dimensions_v2.pegHoleGrid || {};
+                metadata.geometry = pegboard.dimensions_v2.geometry || {};
+
+                console.log('✅ Using enhanced dimensions v2 for pegboard');
+            }
+
+            // Use actual peg holes if available (Phase 1 data)
+            if (pegboard.peg_holes && Array.isArray(pegboard.peg_holes)) {
+                metadata.pegHoles = pegboard.peg_holes.map(h =>
+                    new THREE.Vector3(h.x, h.y, h.z)
+                );
+                console.log(`✅ Loaded ${metadata.pegHoles.length} actual peg holes from Phase 1 data`);
+            } else if (metadata.pegHoleGrid && metadata.pegHoleGrid.pattern === 'uniform') {
+                // Fallback: Generate holes from grid if actual holes not provided
+                metadata.pegHoles = this.generatePegHolesFromGrid(metadata);
+                console.log(`⚠️ Generated ${metadata.pegHoles.length} peg holes from grid (fallback)`);
+            }
+
+            return metadata;
+        },
+
+        // NEW: Phase 2 - Generate peg holes from grid metadata (fallback)
+        generatePegHolesFromGrid: function(metadata) {
+            const holes = [];
+            const grid = metadata.pegHoleGrid;
+            const dims = metadata.dimensions;
+
+            if (!grid.rows || !grid.cols || !grid.spacing) {
+                return holes;
+            }
+
+            const width = dims.width || 0.22;
+            const height = dims.height || 0.44;
+            const spacing = grid.spacing;
+
+            const gridWidth = (grid.cols - 1) * spacing;
+            const gridHeight = (grid.rows - 1) * spacing;
+            const startX = -gridWidth / 2;
+            const startY = -gridHeight / 2;
+
+            for (let row = 0; row < grid.rows; row++) {
+                for (let col = 0; col < grid.cols; col++) {
+                    holes.push(new THREE.Vector3(
+                        startX + (col * spacing),
+                        startY + (row * spacing),
+                        0 // Front face
+                    ));
+                }
+            }
+
+            return holes;
         },
 
         // Position and scale pegboard model
@@ -304,58 +383,78 @@
         },
 
         // Initialize grid system for accessory placement
-        initializeGridSystem: function (dimensions) {
-            if (!dimensions) {
-                console.warn('⚠️ No dimensions provided for grid system');
+        // NEW: Phase 2 - Enhanced to use actual peg hole data
+        initializeGridSystem: function (pegboard) {
+            if (!pegboard) {
+                console.warn('⚠️ No pegboard provided for grid system');
                 return;
             }
 
-            const pegHoleSpacing = 0.0254; // 2.54cm in meters
-            const width = dimensions.width || 1.0;
-            const height = dimensions.height || 1.0;
-            const depth = dimensions.depth || 0.02; // Default 2cm depth
+            // Get pegboard metadata from model (Phase 2)
+            const metadata = this.config.currentPegboardModel?.userData.pegboardMetadata;
 
-            // Calculate the front face Z position (where accessories should hang)
-            // Accessories should be positioned on the front face of the pegboard
-            const frontFaceZ = depth / 2 + 0.01; // Slightly in front of the pegboard surface
+            if (metadata && metadata.pegHoles && metadata.pegHoles.length > 0) {
+                // Phase 2: Use actual peg holes from metadata
+                this.config.gridSystem = {
+                    enabled: true,
+                    pegHoleSpacing: metadata.pegHoleGrid?.spacing || 0.0254,
+                    width: metadata.dimensions.width || 0.22,
+                    height: metadata.dimensions.height || 0.44,
+                    depth: metadata.dimensions.depth || 0.02,
+                    frontFaceZ: (metadata.dimensions.depth || 0.02) / 2,
+                    pegHoles: metadata.pegHoles, // Use actual holes from Phase 1 data
+                    pegHoleGrid: metadata.pegHoleGrid,
+                    geometry: metadata.geometry
+                };
 
-            // Calculate peg hole positions on the front face
-            const pegHoles = [];
-            const cols = Math.floor(width / pegHoleSpacing);
-            const rows = Math.floor(height / pegHoleSpacing);
+                console.log('🔲 Grid system initialized with Phase 2 enhancements:', {
+                    pegHoles: metadata.pegHoles.length,
+                    spacing: metadata.pegHoleGrid?.spacing,
+                    dimensions: metadata.dimensions,
+                    source: 'Phase 1 enhanced data'
+                });
+            } else {
+                // Fallback to legacy grid generation
+                const dimensions = pegboard.dimensions || {};
+                const pegHoleSpacing = 0.0254; // 2.54cm in meters
+                const width = dimensions.width || 1.0;
+                const height = dimensions.height || 1.0;
+                const depth = dimensions.depth || 0.02;
+                const frontFaceZ = depth / 2 + 0.01;
 
-            for (let row = 0; row < rows; row++) {
-                for (let col = 0; col < cols; col++) {
-                    const x = (col * pegHoleSpacing) - (width / 2) + (pegHoleSpacing / 2);
-                    const y = (row * pegHoleSpacing) - (height / 2) + (pegHoleSpacing / 2);
+                const pegHoles = [];
+                const cols = Math.floor(width / pegHoleSpacing);
+                const rows = Math.floor(height / pegHoleSpacing);
 
-                    // Position accessories on the front face of the pegboard
-                    pegHoles.push({ x, y, z: frontFaceZ });
+                for (let row = 0; row < rows; row++) {
+                    for (let col = 0; col < cols; col++) {
+                        const x = (col * pegHoleSpacing) - (width / 2) + (pegHoleSpacing / 2);
+                        const y = (row * pegHoleSpacing) - (height / 2) + (pegHoleSpacing / 2);
+                        pegHoles.push(new THREE.Vector3(x, y, frontFaceZ));
+                    }
                 }
-            }
 
-            // Store grid configuration
-            this.config.gridSystem = {
-                enabled: true,
-                pegHoleSpacing: pegHoleSpacing,
-                width: width,
-                height: height,
-                depth: depth,
-                frontFaceZ: frontFaceZ,
-                pegHoles: pegHoles
-            };
+                this.config.gridSystem = {
+                    enabled: true,
+                    pegHoleSpacing: pegHoleSpacing,
+                    width: width,
+                    height: height,
+                    depth: depth,
+                    frontFaceZ: frontFaceZ,
+                    pegHoles: pegHoles
+                };
+
+                console.log('🔲 Grid system initialized (legacy fallback):', {
+                    pegHoles: pegHoles.length,
+                    spacing: pegHoleSpacing,
+                    dimensions: { width, height, depth }
+                });
+            }
 
             // Create visual grid helper (optional, for debugging)
             if (window.location.search.includes('debug=true')) {
                 this.createGridHelper();
             }
-
-            console.log('🔲 Grid system initialized:', {
-                pegHoles: pegHoles.length,
-                spacing: pegHoleSpacing,
-                dimensions: { width, height, depth },
-                frontFaceZ: frontFaceZ
-            });
         },
 
         // Enable accessory placement mode
@@ -483,40 +582,39 @@
                 return;
             }
 
-            // Snap to grid with enhanced validation
-            const snappedPosition = this.snapToGrid(intersectionData.point);
-            
+            // NEW: Phase 2 - Use peg system for snapping
+            const snapResult = this.snapAccessoryToGrid(
+                this.config.placementMode.accessoryData,
+                intersectionData.point
+            );
+
             // Check if snapping was successful
-            if (!snappedPosition) {
-                console.log('❌ No valid peg hole found near click position');
-                this.showError('Please click closer to a peg hole');
+            if (!snapResult || !snapResult.valid) {
+                const reason = snapResult?.reason || 'Invalid placement';
+                console.log('❌ Snap failed:', reason);
+                this.showError(reason);
                 return;
             }
 
             // Get actual dimensions from model
             const dimensions = this.config.modules.models.getModelDimensions(this.config.placementMode.model);
 
-            // Enhanced validation with specific error messages
-            if (!this.isValidGridPosition(snappedPosition, dimensions)) {
-                // Provide specific error message based on validation failure
-                const errorMessage = this.getPlacementErrorMessage(snappedPosition, dimensions);
-                this.showError(errorMessage);
-                return;
-            }
-
             // Create final model
             const model = this.config.placementMode.model.clone();
-            
-            // Position accessory on the front face of the pegboard
-            model.position.copy(snappedPosition);
-            
+
+            // NEW: Phase 2 - Position with precise flush mounting
+            model.position.copy(snapResult.position);
+            model.rotation.copy(snapResult.rotation);
+
             // Apply accessory-specific positioning and orientation
             this.applyAccessoryPositioning(model, this.config.placementMode.accessoryData);
-            
-            console.log('🔧 Accessory positioned:', {
+
+            console.log('🔧 Accessory positioned with Phase 2 precision:', {
                 name: this.config.placementMode.accessoryData.name,
-                position: snappedPosition,
-                frontFaceZ: this.config.gridSystem.frontFaceZ,
+                position: snapResult.position,
+                flushZ: snapResult.position.z,
+                pegCount: snapResult.pegConfig?.pegCount || 0,
+                occupiedHoles: snapResult.occupiedHoles?.length || 0,
                 finalPosition: model.position,
                 rotation: model.rotation,
                 dimensions: dimensions
@@ -525,17 +623,35 @@
             // Add to scene
             this.config.modules.core.addToScene(model);
 
-            // Create accessory data with enhanced information
+            // Create accessory data with enhanced Phase 2 information
             const placementId = 'accessory_' + Date.now();
             const accessoryData = {
                 placementId: placementId,
                 id: this.config.placementMode.accessoryData.id,
                 name: this.config.placementMode.accessoryData.name,
                 model: model,
-                position: snappedPosition,
+                position: snapResult.position,
+                rotation: snapResult.rotation,
                 dimensions: dimensions,
-                placedAt: new Date().toISOString()
+                placedAt: new Date().toISOString(),
+                // NEW: Phase 2 - Store peg system data
+                occupiedHoles: snapResult.occupiedHoles || [],
+                pegConfig: snapResult.pegConfig,
+                validation: snapResult.validation,
+                flushMounted: true
             };
+
+            // NEW: Phase 2 - Mark peg holes as occupied
+            if (snapResult.occupiedHoles && snapResult.occupiedHoles.length > 0) {
+                this.config.modules.pegSystem.markHolesOccupied(
+                    snapResult.occupiedHoles,
+                    placementId,
+                    this.config.pegHoleOccupancy
+                );
+            }
+
+            // Store in placed accessories
+            this.config.placedAccessories.push(accessoryData);
 
             // Trigger placement event
             const jQuery = window.jQuery || window.$;
@@ -546,7 +662,7 @@
             // Exit placement mode
             this.exitPlacementMode();
 
-            console.log('✅ Accessory placed successfully');
+            console.log('✅ Accessory placed successfully with Phase 2 enhancements');
             this.showSuccess(`${this.config.placementMode.accessoryData.name} placed successfully`);
         },
 
@@ -585,10 +701,19 @@
             if (index !== -1) {
                 const accessory = this.config.placedAccessories[index];
 
+                // NEW: Phase 2 - Free occupied peg holes
+                if (accessory.occupiedHoles && accessory.occupiedHoles.length > 0) {
+                    this.config.modules.pegSystem.freeOccupiedHoles(
+                        accessory.occupiedHoles,
+                        this.config.pegHoleOccupancy
+                    );
+                    console.log(`🔓 Freed ${accessory.occupiedHoles.length} peg holes from ${accessory.name}`);
+                }
+
                 // Remove from scene
                 if (accessory.model) {
                     this.config.modules.core.removeFromScene(accessory.model);
-                    
+
                     // Dispose of model resources
                     this.disposeAccessoryModel(accessory.model);
                 }
@@ -1046,6 +1171,116 @@
             // If no valid snap point found, return null to indicate invalid placement
             console.log('⚠️ No valid snap point found for position:', position);
             return null;
+        },
+
+        // NEW: Phase 2 - Snap accessory to grid using peg system
+        snapAccessoryToGrid: function(accessory, mousePosition) {
+            if (!this.config.gridSystem || !this.config.gridSystem.enabled) {
+                return null;
+            }
+
+            if (!this.config.currentPegboardModel || !this.config.currentPegboardModel.userData.pegboardMetadata) {
+                console.warn('⚠️ No pegboard metadata available, falling back to old snap');
+                return this.snapToGrid(mousePosition);
+            }
+
+            // Get peg configuration from accessory data (Phase 1 enhanced fields)
+            const pegConfig = accessory.peg_config || accessory.pegConfig;
+
+            if (!pegConfig || !pegConfig.pegs || pegConfig.pegs.length === 0) {
+                console.warn('⚠️ No peg configuration for accessory:', accessory.name);
+                // Fallback to old snap behavior for accessories without peg config
+                return this.snapToGrid(mousePosition);
+            }
+
+            const pegboardMeta = this.config.currentPegboardModel.userData.pegboardMetadata;
+            const pegSystem = this.config.modules.pegSystem;
+
+            // Find closest hole to mouse position
+            const closestHole = pegSystem.findClosestHole(mousePosition, pegboardMeta.pegHoles);
+
+            if (!closestHole) {
+                return {
+                    valid: false,
+                    reason: 'No peg holes available',
+                    position: null
+                };
+            }
+
+            // Find compatible peg hole groups for this accessory
+            const holeGroups = pegSystem.findCompatiblePegHoles(
+                pegConfig,
+                pegboardMeta.pegHoles,
+                closestHole,
+                0.003 // 3mm tolerance
+            );
+
+            if (holeGroups.length === 0) {
+                return {
+                    valid: false,
+                    reason: 'No compatible peg pattern found near this position',
+                    position: null,
+                    closestHole: closestHole
+                };
+            }
+
+            // Use first valid group (could be extended to test multiple groups)
+            const holeGroup = holeGroups[0];
+
+            // Check if holes are occupied
+            if (pegSystem.checkHolesOccupied(holeGroup, this.config.pegHoleOccupancy)) {
+                const occupant = pegSystem.getHoleOccupant(holeGroup, this.config.pegHoleOccupancy);
+                return {
+                    valid: false,
+                    reason: 'Peg holes already occupied by another accessory',
+                    position: null,
+                    holeGroup: holeGroup,
+                    occupant: occupant
+                };
+            }
+
+            // Validate peg placement (diameter, length, alignment)
+            const validation = pegSystem.validatePegPlacement(
+                pegConfig,
+                holeGroup,
+                pegboardMeta
+            );
+
+            if (!validation.valid) {
+                return {
+                    valid: false,
+                    reason: 'Peg validation failed: ' + validation.errors.join(', '),
+                    validation: validation,
+                    holeGroup: holeGroup
+                };
+            }
+
+            // Calculate accessory position from peg holes
+            const position = pegSystem.calculateAccessoryPositionFromPegs(
+                pegConfig,
+                holeGroup,
+                0 // rotation (TODO: Phase 3 - add rotation support)
+            );
+
+            // Calculate flush Z position (geometric mounting)
+            position.z = pegSystem.calculateFlushZ(pegConfig, pegboardMeta);
+
+            console.log('✅ Phase 2 snap successful:', {
+                accessory: accessory.name,
+                pegCount: pegConfig.pegCount,
+                position: position,
+                holeGroup: holeGroup.length,
+                flushZ: position.z
+            });
+
+            return {
+                valid: true,
+                position: position,
+                rotation: new THREE.Euler(0, 0, 0),
+                occupiedHoles: holeGroup,
+                validation: validation,
+                pegConfig: pegConfig
+            };
         },
 
         // Check if position is valid for placement (Enhanced for Requirements 3.2, 3.3, 3.4)
